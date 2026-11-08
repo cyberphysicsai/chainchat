@@ -1,0 +1,215 @@
+# Security boundary and upstream dependencies
+
+ChainChat is a local, authenticated OpenClaw distribution with a reviewed plugin
+and native Timechain orchestrator. Functional tests do not establish perfect
+security, truthful model judgment or an absence of dependency vulnerabilities.
+
+The installed UI initially authenticates with an expiring, single-use launcher
+nonce. Same-tab reload can use a rotating opaque resume credential stored in
+local-origin `sessionStorage`. That credential grants access to the same live
+session; it is sensitive even though no provider API key or API bearer is saved
+there. Resume requires both owner proof and the exact local Origin. Merely
+forging loopback Origin/fetch headers cannot create a session. Session end,
+expiry and runtime restart invalidate the grant; closing a tab is not a reliable
+server-side revocation signal. The embedded auditor is trusted same-origin UI,
+not a sandbox boundary. Its messaging protocol deliberately forwards only fixed
+reads and never sends the model key or parent bearer into the frame.
+
+The original OpenClaw npm archive stays at the exact commitment in
+`upstream-lock.json` (OpenClaw 2026.10.10). The extracted runtime has one explicit
+metadata compatibility overlay, `early-hook-input-provenance-v2`: it forwards
+only existing `inputProvenance: params.inputProvenance` and
+`currentSourceTurnId: params.currentSourceTurnId` into the embedded-agent and CLI
+runner's same early hook contexts. These typed native fields preserve private
+asynchronous producer provenance and the framework's original client nonce for
+queued-request correlation before mandatory PoI admission. Text markers and
+transport acknowledgments never substitute for that provenance. No model, permission, tool or
+safety semantics are changed. Installers check both exact original SHA-256
+values before replacement; doctor and Gateway require both exact final hashes.
+Unknown source bytes, earlier overlay output or a new upstream version fail closed. The original npm
+SRI describes the downloaded archive; the separate overlay descriptors attest
+the two installed files. A separate, exact dependency overlay selects external
+Undici 8.12.3, Zod 4.6.7, npm 12.2.1 and Minimatch 11.0.4. These are ordinary dependency overrides,
+not edits to the upstream source tarball. The runtime lockfile, setup integrity
+checks and launcher doctor validate these selections. Adoption requires actual
+Gateway and installed-application regression tests. Automatic upstream update
+checks and automatic application of updates are disabled in the managed Gateway.
+
+The external overrides do not replace embedded dependency copies. A separate
+`bundledDependencyOverlays` commitment installs official, hash-verified,
+same-major Undici 6.29.1 and ip-address 10.7.6 archives into npm's own bundled
+dependency directories after `npm ci --ignore-scripts`. Both platform installers
+apply these archives; launcher doctor verifies the actual installed versions.
+This replaces whole published dependency packages without editing their source.
+It is distinct from the two-file OpenClaw metadata overlay above. The downloaded
+npm archive and its upstream lock metadata still
+describe the original bundled copies, so a raw upstream-lock audit is not a
+measurement of these separately verified installed replacements.
+
+Residual embedded findings remain:
+
+- OpenClaw's compiled schema bundles contain Zod 4.6.5. The upstream collection
+  bounds fix checks limits before parsing elements; replacing the external Zod
+  npm package does not apply that fix to embedded code. See the
+  [upstream Zod fix](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd).
+- npm 12.2.1's published archive bundles Undici 6.29.0. The
+  [Undici advisory](https://github.com/nodejs/undici/security/advisories/GHSA-xjj6-f33q-929c)
+  specifies fixed 6.x version 6.29.1, which the separate bundled archive overlay
+  applies. A top-level override alone does not fix this copy. The bundled
+  ip-address denial-of-service finding is likewise addressed by its verified
+  10.7.6 same-major replacement. The npm package-manager dependency tree retains
+  other moderate audit findings. The
+  [npm release notes](https://github.com/npm/cli/releases/tag/v12.2.1)
+  do not establish that all its bundled dependencies are fixed.
+- The external Minimatch override includes the
+  [globparts amplification fix](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249).
+  npm's bundled Minimatch 10.2.5 and Glob 13.0.6 remain separate: their published
+  fixes require new major versions and different dependency trees. They have
+  not been silently replaced with incompatible majors. The original locked tree
+  reported 34 moderate and one high findings before the explicit bundled
+  replacements; that raw lock report is retained as upstream evidence, with
+  replacement verification reported separately. No lock metadata is rewritten
+  to hide a vulnerable published npm bundle.
+
+The managed UI does not expose npm/package-manager tools. Host tools are
+default-denied and require explicit per-agent grants, scope validation and fresh
+semantic/native admission before each invocation. Exploratory search branches
+and utility calls cannot use them. Gateway HTTP is authenticated and bound to numeric loopback; the UI never
+receives its operator token. ChainChat constructs Gateway message envelopes,
+limits them to 200 messages and sends no arbitrary browser-provided tool or
+configuration schemas. Browser chat input becomes message text. The reviewed
+HTTP schema uses unknown message/tool elements rather than the constrained
+collection route identified in the Zod fix. Review found no identified path from
+the current UI to that specific oversized-collection exploit. This is a scoped
+reachability assessment, not proof that every embedded schema is safe.
+
+The provider proxy bounds responses, refuses redirects and strips transport
+encoding headers when forwarding decoded content. Provider credentials remain
+in the parent process; the child receives private proxy credentials. Native
+admission and exact candidate receipts remain required regardless of model
+output. Default-denied tools are not an OS sandbox: explicitly approved native
+operator code still runs with the local user's permissions.
+
+Do not expose the Gateway or ChainChat HTTP ports publicly or treat arbitrary
+standalone OpenClaw plugins, channels, CLI commands or tools as covered by this
+configuration's tests. Extending those paths requires a fresh security review.
+Use `npm audit --omit=dev` in `openclaw/runtime` when reviewing updates, inspect
+embedded libraries as well as lockfile findings, and test a reviewed upstream
+release containing those fixes before removing the residual notices. An audit
+with zero lockfile findings would not itself prove embedded copies are fixed.
+
+
+## Native controls and explicit local tools
+
+The native upgrade adapter recognizes only the reviewed shared-state 20-to-22
+and agent-state 25-to-27 transitions. It checks regular-file ownership, schema
+metadata and integrity using disposable copies, then retains a checksummed raw
+backup before supervisor configuration changes. The backup includes the whole
+owned OpenClaw directory, authentication and managed workspace notes. Only
+derived workspace/plugin skill links are recorded as link metadata; their
+targets are not copied. Other links and hardlinks are refused.
+
+Backup directories disable inherited Windows access and grant only the current
+owner, SYSTEM and Administrators, or use owner-only POSIX permissions. This is
+filesystem protection, not encryption. The fixed offline Doctor invocation
+uses the exact pinned runtime, noninteractive repair without force, external
+service-repair policy, and scoped state/configuration. No model request is
+authorized by migration. Unexpected findings retain the hold; failures retain
+the backup and an interruption receipt. Managed configuration is reprojected
+after Doctor, and all normal startup and PoI health checks remain required.
+An earlier app pointer cannot make a newer native schema readable by an older
+runtime. Offline recovery must use a compatible runtime and verified native
+backup; the adapter never blindly downgrades a database or replaces a Timechain.
+
+Automatic native utility routing is disabled with `agents.defaults.utilityModel:
+""`, and native remote memory indexing/search is disabled with
+`memory.search.enabled: false`. Upstream otherwise derives utility models from
+the global native provider and defaults memory embeddings to OpenAI, independently
+of the selected chat connection. A separate explicit owner setting grant can enable
+either native feature. That route has its own provider cost and privacy terms.
+Private PoI SDK review still uses the expressly
+selected native main model; these defaults do not bypass or disable review.
+
+BYOK native agent runs, including admitted children, are routed to the
+owner's exact private proxy provider before native model selection. Their native
+fallback chain is empty; a saved native profile cannot become a paid fallback.
+The mandatory context engine independently checks the actual public native
+runtime provider/model metadata before supplying any model context. Missing or
+mismatched metadata triggers the existing owned-process fail-stop. Route lookup
+can read a host-registered claim before native admission, but cannot bind its
+run ID, prepare context, grant tools or revive a completed candidate. Native
+provider mode retains explicitly configured native model overrides.
+When upstream selects a continuation model before forwarding its full typed
+input, a read-only routing hint may use an actually observed task/creation
+receipt or an enrolled native source. Media hints recheck the exact parent
+session, lifecycle and receipt epoch. They do not parse message text, reserve a
+task or create a Timechain. The current owner connection is checked separately;
+later admission still requires the complete native source proof and fresh
+model-route verification before inference.
+
+Recurring heartbeats require the native Automations scheduler and an explicitly
+enrolled owner source. The source's monitor-note editor uses only the actual
+system heartbeat job and upstream compare-and-swap scratch APIs. It rechecks
+enrollment, native configuration and the exact monitor before and after each
+read/write. Editing requires the owner's current background grant; reading or
+revoking an owned source remains available after a grant is disabled. Notes
+are prompt data, never tool authority. Upstream intentionally skips scheduled
+model work for an empty scratch; removing the scratch restores the configured
+heartbeat prompt. Each admitted turn still receives canonical policy and fresh
+semantic/native review.
+
+Native goals/preferences have durable local session state. Direct BYOK keys and local
+session authority remain in parent-process memory; native provider sign-in uses
+OpenClaw's private local credential store and may persist keys or OAuth tokens there.
+Persistent native authentication is not cleared by closing a browser tab or stopping
+the app. Dedicated TTS credentials use a separate plaintext local
+`native-secrets.json` store, with owner-only file/directory modes on POSIX and the
+installation's user-profile ACLs on Windows. This is not an encrypted vault.
+Only configured native TTS provider/persona targets are accepted; settings hold
+official `SecretInput` references to generated, exactly allowlisted child
+environment names. Public state never contains the credential values. Deleting a
+binding removes it from the managed child on the next owned restart. The operator token never reaches
+the browser. Native schema inspection is redacted; edits cannot remove required
+PoI enforcement or replace managed credentials, plugins or gateway bindings.
+Deterministic native slash-command results are control output, not model answers
+or fabricated conversation seals.
+
+Granting exec/process permits broad execution as the local OS user. Directory and
+requested-host lists do not sandbox arbitrary subprocesses. File grants are
+canonicalized, reject symlink escapes and protect application/data/paired-chain
+roots. Browser automation uses an owned profile and a managed authenticated
+network proxy; requested-navigation checks alone cannot contain DNS changes,
+redirects and page subresources. Each native primitive action receives fresh
+semantic/native review. Compound actions and unverifiable cross-origin frame
+references are held. Model-supplied JavaScript requires the separate broad
+evaluation, credential and payment acknowledgments; it is not keyword-sandboxed.
+Web-fetch grants retain
+native DNS/private-network checks and disable redirects. These checks do not
+constitute a system firewall or OS sandbox. Native channel text and scheduled
+turns use explicit immutable bindings and the shared review/commit pipeline;
+separate outgoing permits expire on source, local-session or provider revocation.
+
+Compaction requires an exact-source summary receipt and native transcript CAS.
+Private, per-invocation model-route capabilities identify proxy-mode invocations
+and are stripped before provider forwarding. Native provider mode does not add
+these proxy markers; it uses private session and assembly receipts. Missing reviewed
+context, including a legacy engine fallback, cannot authorize model generation.
+The mandatory factory is probed before startup is reported ready and before
+native work/provider forwarding. Its guard latches faults without selecting a
+legacy writer. Unexpected accepted-turn commit failures stop the owned Gateway
+before native exception recovery; constructor-fault tests verify no deterministic
+compaction append, even when no model call would have occurred.
+
+Browser proxy credentials remain in the parent. The private CDP relay answers
+only authentication challenges marked Proxy from the exact owned endpoint;
+website authentication does not receive that credential. Capability-bound
+discovery validates the actual owned browser/page endpoints. Real two-client
+HTTPS and origin Basic-auth checks accompany bounded protocol, queue, shutdown
+and revocation tests. This transport does not sandbox trusted native plugin code.
+
+The pinned first-party browser backend is a required service; its original
+tool receives mandatory parameter scoping, PoI review and result reduction. Third-party native plugins require explicit exact
+artifact trust and native lifecycle consent. **They execute with the local user's
+OS permissions and can act outside model hooks.** PoI gates model actions, not
+arbitrary trusted plugin code. Do not treat importing a chain, enabling a tool,
+or passing deterministic tests as a native-plugin sandbox or proof of security.

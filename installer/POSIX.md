@@ -1,0 +1,126 @@
+# macOS and Linux setup
+
+The macOS ZIP contains executable **Install ChainChat.command**. Extract it and
+double-click that file. The Linux tar.gz contains executable **Install
+ChainChat.sh**; extract it and use the file manager's **Run as Program** action.
+A direct `.run` is also supplied for shell-oriented Linux installations. Desktop
+policies differ: a downloaded script may require the normal execute/launch
+confirmation. These packages are unsigned and macOS notarization is not claimed.
+Setup never removes quarantine flags or bypasses Gatekeeper.
+
+Setup displays six numbered stages, from preparation and verified downloads to
+the browser setup guide. In an interactive terminal, press Enter on the welcome
+screen to begin, or Ctrl+C to cancel. Noninteractive and `--quiet` invocations do
+not wait for that input. Progress and the final handoff use stderr; stdout keeps
+the machine-readable JSON result. The final message confirms local runtime
+readiness and explains the remaining browser steps: connect a model, choose a
+fresh or existing Timechain, then check chat readiness. No API key is requested
+in the installer or terminal. `--no-launch` explicitly reports that startup has
+not been checked and points to the installed application shortcut.
+
+Both packages detect ARM64 or x64 and download exact SHA-256-pinned Node
+26.13.0 and portable CPython 3.12.16 runtimes. Python comes from the reviewed
+Astral python-build-standalone 20261026 release. No system Node/Python, Homebrew,
+pip package, sudo, system service or PATH modification is needed. Initial setup
+requires Internet access and curl or wget. Runtime licenses/notices remain in the
+installed upstream archives.
+
+Supported binary baselines follow the pinned Node release: **macOS 13.5+**, and
+**Linux kernel 4.18+/glibc 2.28+** on ARM64/x64. Alpine/musl and 32-bit Linux are
+not claimed. The installer downloads prebuilt runtimes; it does not install
+compiler toolchains. Use a filesystem supporting normal POSIX permissions,
+executable files and symlinks. Existing group/world-writable installation roots
+are refused rather than trusted with private local control credentials.
+
+Default locations are:
+
+- macOS: `~/Library/Application Support/CypherTempre/ChainChat`
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/CypherTempre/ChainChat`
+
+The application, portable runtimes and immutable releases live under that private
+per-user root; `data/` is persistent. Existing external Timechains remain at
+their selected paths. macOS setup creates a local app in `~/Applications`;
+Linux creates a user application-menu entry. It opens the authenticated local
+chat with OpenClaw and PoI included. Choose your model/API and a fresh or existing
+chain. Provider setup is available immediately after local authentication.
+
+Optional browser automation can use an existing Chrome, Chromium or Edge
+executable with a fresh owned profile. The **Browser** settings tab also offers
+an explicit managed Chromium setup action; downloads stay under
+`data/browser-runtime/` and use the exact installed Playwright CLI. Setup does
+not run `sudo` or install Linux browser system libraries. Personal browser
+profiles are not imported.
+
+### Linux browser sandbox policy
+
+The base application install remains per-user and needs no administrator
+permission. Optional browser automation also needs working Chromium system
+libraries and its sandbox. Ubuntu 23.10+ can block user namespaces for downloaded
+browsers through AppArmor. A launch error mentioning `No usable sandbox`,
+`userns` or `AppArmor` requires an OS policy review; reinstalling the application
+does not grant this permission.
+
+Prefer a supported Chrome/Chromium package with an appropriate distribution
+security profile. An administrator can instead approve only the exact managed
+Chromium executable using the
+[upstream per-executable AppArmor procedure](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md).
+Use its canonical absolute binary path, not a wildcard covering downloaded
+programs or the whole user directory. Anyone able to replace a binary at that
+approved path gains the same namespace permission, so keep its directory
+private and review the profile when a managed-browser update changes the path.
+The installer does not create this privileged exception. Do not disable
+Chromium's sandbox or the system-wide namespace restriction to work around a
+launch failure.
+
+The Python front door waits for the private owned-runtime status and supports
+relaunch without replacing a live matching runtime. It does not report success
+merely because Node was spawned, and it never kills another program to obtain a
+port. Quiet CI mode reports a nonzero failure/result file; desktop launches show
+a safe error where the OS's dialog tools are available. Cold startup has a bounded
+fifteen-minute readiness window for storage checks, offline upgrades and Gateway startup. An
+exited child still fails immediately, and only its authenticated owned runtime
+can report readiness. Logs stay in the private installation. Quitting the browser
+does not stop the local runtime.
+
+`current.json` and `previous.json` select immutable releases. Setup verifies its
+source ZIP, exact dependency lockfiles, native engine commitments and installed
+runtime before activation. Repeating setup checks existing source bytes rather
+than overwriting a modified release. Failed candidates retain the old pointer.
+`launcher.py --rollback --install-root ...` switches to the checked previous
+release without deleting data. This is release rollback, not a reversal of chain
+mutations or an arbitrary schema downgrade.
+
+## Build from a reviewed application archive
+
+From the application directory:
+
+```sh
+python3 installer/build_posix.py --archive /reviewed/cypher-tempre-chat-v1.0.0.zip --output-dir /reviewed/setup --platform all
+```
+
+The builder reads bootstrap/installer sources and runtime pins from that ZIP,
+not an unstaged source file. It emits macOS ZIP, Linux tar.gz, optional Linux
+`.run`, JSON build manifests and SHA-256 sidecars. Each operating-system package
+contains both architecture selections. Runtime pins are in
+`openclaw/upstream-lock.json`; the official Node SHASUMS and Astral release asset
+digest metadata were checked when selecting them.
+
+## Isolated acceptance
+
+Use a fresh test directory through the included harness. It creates shortcuts
+only in a synthetic HOME/XDG directory, briefly starts a private local runtime
+with no browser and uses synthetic native-chain data, then authenticates shutdown:
+
+```sh
+python3 installer/acceptance_posix.py --installer /reviewed/setup/CypherTempre-ChainChat-Setup-1.0.0-linux.tar.gz --work-root /var/tmp/chainchat-acceptance
+```
+
+Use the macOS ZIP path on a macOS runner. Optional `--cache-dir` reuses only
+hash-matching upstream archives. Acceptance covers fresh/repeat install, native
+verification, preserved data, executable desktop shortcuts in a synthetic home,
+actual OpenClaw readiness and native settings RPC, same-PID relaunch,
+occupied-port failure, bootstrap/rotating resume, read-only auditing, modified
+source rejection and rollback pointer selection. A successful installer test
+does not establish model answer quality or eliminate the documented upstream
+dependency risks. Architecture/platform support is reported according to actual
+native or CI runs; Windows cannot validate execution of a macOS binary.

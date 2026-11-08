@@ -1,0 +1,170 @@
+name: ChainChat
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  chat:
+    runs-on: ubuntu-latest
+    env:
+      CT_PARITY_REFERENCE: ${{ github.workspace }}/engine/proof-of-interaction
+      CT_ORIGINAL_SKILL: ${{ github.workspace }}/engine/proof-of-interaction
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.13.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install exact OpenClaw pin and enable real runtime tests
+        run: |
+          npm ci --ignore-scripts --prefix openclaw/runtime
+          python installer/security_overlays.py --application . --cache "$RUNNER_TEMP/chainchat-security-overlays"
+          python installer/runtime_compatibility.py --application .
+          python installer/check_upstream.py > "$RUNNER_TEMP/chainchat-upstream-check.json"
+          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert len(overlays)==1 and overlays[0]["id"]=="early-hook-input-provenance-v2" and len(overlays[0]["files"])==2'
+          node openclaw/launcher.mjs --check
+          echo "CT_OPENCLAW_PACKAGE=$GITHUB_WORKSPACE/openclaw/runtime/node_modules/openclaw" >> "$GITHUB_ENV"
+          echo "CT_OPENCLAW_NODE=$(node -p process.execPath)" >> "$GITHUB_ENV"
+      - name: Install previous runtime only for real upgrade acceptance
+        run: |
+          python -c 'import json; from pathlib import Path; root=Path("test/fixtures/previous-openclaw"); package=json.loads((root/"package.json").read_text()); lock=json.loads((root/"package-lock.json").read_text()); previous=lock["packages"]["node_modules/openclaw"]; assert package["dependencies"]["openclaw"]=="2026.10.9"; assert previous["version"]=="2026.10.9"; assert previous["resolved"]=="https://registry.npmjs.org/openclaw/-/openclaw-2026.10.9.tgz"; assert previous["integrity"]=="sha512-KbIl0/7an0/nKBo92FnJg7LFcEpFVQyOgSRfHNE9yxELg1Ebql7BmBsdLL+1dDOLZnQtuwjt6Hy45CCrmYdJNA=="'
+          npm ci --ignore-scripts --omit=dev --prefix test/fixtures/previous-openclaw
+          python -c 'import json,os; from pathlib import Path; root=Path("test/fixtures/previous-openclaw/node_modules/openclaw").resolve(); assert json.loads((root/"package.json").read_text())["version"]=="2026.10.9"; stream=open(os.environ["GITHUB_ENV"],"a",encoding="utf-8"); stream.write("CT_OPENCLAW_LEGACY_PACKAGE="+str(root)+"\n"); stream.close()'
+      - name: Install the locked isolated browser for native action acceptance
+        run: |
+          node --input-type=commonjs -e 'const r=require("node:module").createRequire(process.env.CT_OPENCLAW_PACKAGE+"/package.json"); const p=require("node:path"); require("node:child_process").execFileSync(process.execPath,[p.join(p.dirname(r.resolve("playwright-core/package.json")),"cli.js"),"install","--with-deps","chromium"],{stdio:"inherit"}); require("node:fs").appendFileSync(process.env.GITHUB_ENV,"CT_BROWSER_EXECUTABLE="+r("playwright-core").chromium.executablePath()+"\n");'
+      - name: Allow sandbox user namespaces only for the exact CI browser
+        id: browser_sandbox
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ubuntu 23.10+ restricts user namespaces for downloaded Chromium.
+          # Keep Chromium's sandbox enabled; grant only this exact executable.
+          # https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md
+          browser="$(realpath -- "$CT_BROWSER_EXECUTABLE")"
+          test -x "$browser"
+          [[ "$browser" =~ ^/[A-Za-z0-9_./-]+$ ]]
+          restriction=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [[ ! -r "$restriction" ]] || [[ "$(cat "$restriction")" != 1 ]]; then
+            echo "No AppArmor namespace exception is needed on this runner."
+            exit 0
+          fi
+          profile=/etc/apparmor.d/chainchat-ci-chromium
+          if sudo test -e "$profile"; then
+            echo "::error::Refusing to replace an existing AppArmor profile."
+            exit 1
+          fi
+          printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile chainchat-ci-chromium "%s" flags=(unconfined) {\n  userns,\n}\n' "$browser" | sudo tee "$profile" >/dev/null
+          echo "installed=true" >> "$GITHUB_OUTPUT"
+          sudo apparmor_parser -a "$profile"
+      - name: Install and check application
+        run: npm ci --ignore-scripts && npm run check
+      - name: Run the complete Node suite with serial native runtime ownership
+        run: npm run test:engine && node --test --test-concurrency=1 test/*.test.mjs
+      - name: Verify earlier-engine compatibility from an exact independent public source
+        shell: bash
+        run: |
+          set -euo pipefail
+          reference="$RUNNER_TEMP/chainchat-original-reference"
+          test ! -e "$reference"
+          git init "$reference"
+          git -C "$reference" remote add origin https://github.com/cyberphysicsai/cypher-tempre-genesis.git
+          git -C "$reference" -c protocol.version=2 fetch --depth=1 origin ad1afd50c89be5088df6b2ad73016d9950c54920
+          test "$(git -C "$reference" rev-parse FETCH_HEAD)" = ad1afd50c89be5088df6b2ad73016d9950c54920
+          test "$(git -C "$reference" rev-parse FETCH_HEAD:skills/codex/cypher-tempre-self-model)" = d58f506383f00888929167b20c9c2ef2320f2799
+          git -C "$reference" sparse-checkout init --cone
+          git -C "$reference" sparse-checkout set skills/codex/cypher-tempre-self-model
+          git -C "$reference" checkout --detach FETCH_HEAD
+          CT_PARITY_REFERENCE="$reference/skills/codex/cypher-tempre-self-model" node --test test/compatibility.test.mjs
+      - name: Remove the temporary CI browser namespace exception
+        if: always() && steps.browser_sandbox.outputs.installed == 'true'
+        shell: bash
+        run: |
+          profile=/etc/apparmor.d/chainchat-ci-chromium
+          result=0
+          sudo apparmor_parser -R "$profile" || result=$?
+          sudo rm -- "$profile"
+          exit "$result"
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build sanitized application and installer
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'cypher-tempre-chat.zip'
+          $installer = Join-Path $env:RUNNER_TEMP 'ChainChat-Setup.exe'
+          git -C $env:GITHUB_WORKSPACE archive --format=zip --prefix=cypher-tempre-chat/ --output=$archive HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python installer/build_windows.py --archive $archive --output $installer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $installer --self-test --quiet
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python installer/acceptance_windows.py --installer $installer --work-root (Join-Path $env:RUNNER_TEMP 'chainchat-acceptance')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  portable-installers:
+    name: Installer ${{ matrix.id }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            runner: ubuntu-latest
+            platform: linux
+            architecture: x64
+            suffix: linux.tar.gz
+          - id: linux-arm64
+            runner: ubuntu-24.04-arm
+            platform: linux
+            architecture: arm64
+            suffix: linux.tar.gz
+          - id: macos-arm64
+            runner: macos-latest
+            platform: darwin
+            architecture: arm64
+            suffix: macos.zip
+          - id: macos-x64
+            runner: macos-15-intel
+            platform: darwin
+            architecture: x64
+            suffix: macos.zip
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check archive and runtime guards on the native platform
+        run: python3 -m unittest discover -s test -p test_posix_installer.py
+      - name: Build exact source and execute per-user setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/cypher-tempre-chat.zip"
+          git -C "$GITHUB_WORKSPACE" archive --format=zip --prefix=cypher-tempre-chat/ --output="$archive" HEAD
+          python3 installer/build_posix.py --archive "$archive" --output-dir "$RUNNER_TEMP/chainchat-setup" --platform '${{ matrix.platform }}'
+          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          python3 installer/acceptance_posix.py --installer "$RUNNER_TEMP/chainchat-setup/CypherTempre-ChainChat-Setup-$version-${{ matrix.suffix }}" --work-root "$RUNNER_TEMP/chainchat-acceptance"
+          python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); assert report["platform"]==sys.argv[2], "Runner architecture did not match its gate"; assert report["version"]==sys.argv[3]; assert report["shortcutsInSyntheticHome"] is True and report["productionUserInstallationTouched"] is False' "$RUNNER_TEMP/chainchat-acceptance/acceptance-report.json" '${{ matrix.platform }}-${{ matrix.architecture }}' "$version"
+      - name: Keep acceptance report and exact artifact checksums
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chainchat-installer-${{ matrix.id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/chainchat-acceptance/acceptance-report.json
+            ${{ runner.temp }}/chainchat-acceptance/first-install.json
+            ${{ runner.temp }}/chainchat-acceptance/repeat-install.json
+            ${{ runner.temp }}/chainchat-setup/*.json
+            ${{ runner.temp }}/chainchat-setup/*.sha256

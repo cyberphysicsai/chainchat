@@ -1,0 +1,23 @@
+{
+  "name": "proof-of-interaction-enforcement",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Native OpenClaw plugin hooks for Proof of Interaction Timechain enforcement.",
+  "license": "MIT",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "runtimeExtensions": [
+      "./index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": ">=2026.3.24-beta.2"
+    },
+    "build": {
+      "openclawVersion": "2026.3.24-beta.2",
+      "pluginSdkVersion": "2026.3.24-beta.2"
+    }
+  }
+}

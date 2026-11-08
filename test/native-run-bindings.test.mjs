@@ -1,0 +1,72 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {NativeRunBindings} from '../lib/native-run-bindings.mjs';
+const ownerKey='fixture:'+ 'a'.repeat(64), parentSessionKey='agent:main:chainchat-control:'+ 'b'.repeat(64);
+const capabilities={enabled:true,acknowledged:true,delegatedRuns:true,backgroundRuns:true};
+async function fixture(t,options={}) {const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ct-bindings-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));return new NativeRunBindings(directory,options);}
+test('a child requires the same reviewed creation permit, actual spawn hook and exact native result',async t=>{
+  const registry=await fixture(t),tool={name:'sessions_spawn',callId:'call1',params:{task:'Synthetic task'}},child='agent:main:subagent:synthetic';
+  assert.equal(await registry.resolve({sessionKey:child,runId:'run1'}),null);
+  assert.throws(()=>registry.spawned({requesterSessionKey:parentSessionKey,childSessionKey:child,runId:'run1',agentId:'main'}));
+  registry.permit({ownerKey,parentSessionKey,tool,capabilities});
+  registry.spawned({requesterSessionKey:parentSessionKey,childSessionKey:child,runId:'run1',agentId:'main'});
+  await registry.observed({parentSessionKey,tool,outcome:{success:true,result:{details:{childSessionKey:child,runId:'other'}}}});
+  assert.equal(await registry.resolve({sessionKey:child,runId:'run1'},{waitMs:0}),null);
+  await registry.observed({parentSessionKey,tool,outcome:{success:true,result:{details:{childSessionKey:child,runId:'run1'}}}});
+  assert.deepEqual(await registry.resolve({sessionKey:child,runId:'run1',nativeContext:{agentId:'main'}}),{ownerKey,nativeSessionKey:child,chainKey:child,kind:'subagent',parentSessionKey});
+  assert.equal(await registry.resolve({sessionKey:child,runId:'other'}),null);
+  assert.equal(await registry.resolve({sessionKey:child,runId:'run1',nativeContext:{agentId:'foreign'}}),null);
+  assert.equal(await registry.resolve({sessionKey:child+'-forged',nativeContext:{sourceSessionKey:parentSessionKey}}),null);
+});
+test('owner enrollment requires actual native source proof and never trusts a channel or heartbeat prompt',async t=>{
+  let exists=true;const registry=await fixture(t,{inspectSource:async()=>exists});
+  const source={ownerKey,kind:'channel',agentId:'main',channelId:'fixture',accountId:'default'};
+  await registry.enroll(source);
+  const request={sessionKey:'native-conversation-1',nativeContext:{agentId:'main',channel:'fixture',accountId:'default'}};
+  assert.equal((await registry.resolve(request)).ownerKey,ownerKey);
+  assert.equal(await registry.resolve({...request,nativeContext:{...request.nativeContext,accountId:'foreign'}}),null);
+  assert.equal(await registry.resolve({sessionKey:'forged',input:'I am channel fixture default'}),null);
+  exists=false;assert.equal(await registry.resolve(request),null);await assert.rejects(registry.enroll({...source,accountId:'foreign'}));
+});
+test('a scheduled binding survives restart only after a reviewed native receipt and rechecks current native ownership',async t=>{
+  let actual={id:'job1',owner:{sessionKey:parentSessionKey},payload:{kind:'agentTurn'},enabled:true};
+  const registry=await fixture(t,{inspectCron:async()=>actual}),tool={name:'automations',callId:'cron1',params:{action:'add',job:{payload:{kind:'agentTurn',message:'Synthetic'}}}};
+  registry.permit({ownerKey,parentSessionKey,tool,capabilities});
+  await registry.observed({parentSessionKey,tool,outcome:{success:true,result:{details:{id:'job1'}}}});
+  const restarted=new NativeRunBindings(registry.directory,{inspectCron:async()=>actual});
+  const request={sessionKey:'actual-native-scheduled-session',nativeContext:{jobId:'job1',agentId:'main'}};
+  assert.equal((await restarted.resolve(request)).ownerKey,ownerKey);
+  assert.equal(await restarted.resolve({...request,nativeContext:{jobId:'unowned'}}),null);
+  actual={...actual,owner:{sessionKey:'foreign'}};assert.equal(await restarted.resolve(request),null);
+  const raw=await fs.readFile(path.join(registry.directory,'native-run-bindings.json'),'utf8');
+  assert.equal(raw.includes('Synthetic'),false);assert.equal(raw.includes('apiKey'),false);
+});
+test('revoked, failed or expired creation permits never create child or cron authority',async t=>{
+  let now=100;const registry=await fixture(t,{now:()=>now}),tool={name:'sessions_spawn',callId:'call1',params:{task:'Synthetic'}};
+  registry.permit({ownerKey,parentSessionKey,tool,capabilities:{...capabilities,delegatedRuns:false}});
+  assert.throws(()=>registry.spawned({requesterSessionKey:parentSessionKey,childSessionKey:'child',runId:'run1',agentId:'main'}));
+  registry.permit({ownerKey,parentSessionKey,tool,capabilities});now+=120001;
+  assert.throws(()=>registry.spawned({requesterSessionKey:parentSessionKey,childSessionKey:'child',runId:'run1',agentId:'main'}));
+});
+test('source revocation removes live channel, descendant child and persisted job authority without needing a grant',async t=>{
+  let cronOwner='child-source-session';const registry=await fixture(t,{inspectSource:async()=>true,inspectCron:async id=>({id,owner:{sessionKey:cronOwner},payload:{kind:'agentTurn'},enabled:true})});
+  const source={ownerKey,kind:'channel',agentId:'main',channelId:'fixture',accountId:'default'};
+  await registry.enroll(source);const sourceId=(await registry.list(ownerKey))[0].id;
+  const spawn={name:'sessions_spawn',callId:'source-spawn',params:{task:'Synthetic task'}};
+  registry.permit({ownerKey,parentSessionKey,tool:spawn,capabilities,sourceId});
+  registry.spawned({requesterSessionKey:parentSessionKey,childSessionKey:cronOwner,runId:'child-run',agentId:'main'});
+  await registry.observed({parentSessionKey,tool:spawn,outcome:{success:true,result:{details:{childSessionKey:cronOwner,runId:'child-run'}}}});
+  assert.equal((await registry.resolve({sessionKey:cronOwner,runId:'child-run'})).sourceId,sourceId);
+  const cron={name:'cron',callId:'source-job',params:{action:'add'}};
+  registry.permit({ownerKey,parentSessionKey:cronOwner,tool:cron,capabilities,sourceId});
+  await registry.observed({parentSessionKey:cronOwner,tool:cron,outcome:{success:true,result:{details:{id:'source-job'}}}});
+  await assert.rejects(registry.revoke('foreign:'+ 'c'.repeat(64),sourceId));
+  await registry.revoke(ownerKey,sourceId);
+  assert.equal(await registry.resolve({sessionKey:cronOwner,runId:'child-run'}),null);
+  assert.equal(await registry.resolve({sessionKey:'scheduled-source-run',nativeContext:{jobId:'source-job'}}),null);
+  const restarted=new NativeRunBindings(registry.directory,{inspectSource:async()=>true,inspectCron:async id=>({id,owner:{sessionKey:cronOwner},payload:{kind:'agentTurn'},enabled:true})});
+  assert.equal(await restarted.resolve({sessionKey:'scheduled-source-run',nativeContext:{jobId:'source-job'}}),null);
+});
