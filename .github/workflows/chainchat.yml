@@ -21,6 +21,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Verify the packaged skill against the pinned official Git tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          canonical=3834ab95f5af7ce48dcc22ede120133393fcbc6f
+          expected=b74f5d5318e96e0b31efc678ef14753a0787d71b
+          reference=$(mktemp -d "$RUNNER_TEMP/chainchat-canonical-reference.XXXXXX")
+          git init --quiet --bare "$reference"
+          git -C "$reference" fetch --no-tags --depth=1 https://github.com/cyberphysicsai/proof-of-interaction.git "$canonical"
+          test "$(git -C "$reference" rev-parse FETCH_HEAD)" = "$canonical"
+          test "$(git -C "$reference" rev-parse FETCH_HEAD:skills/openclaw/proof-of-interaction)" = "$expected"
+          test "$(git rev-parse HEAD:engine/proof-of-interaction)" = "$expected"
       - name: Install exact OpenClaw pin and enable real runtime tests
         run: |
           npm ci --ignore-scripts --prefix openclaw/runtime
