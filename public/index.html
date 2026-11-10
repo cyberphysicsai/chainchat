@@ -533,6 +533,7 @@
           ><button class="text-button full-width" id="historyButton">
             <svg><use href="#i-blocks" /></svg> Inspect chain
           </button>
+          <button class="text-button full-width" id="openTimechainMaintenance" type="button">Advanced Timechain maintenance</button>
         </div>
         <div class="sidebar-section covenant-mini">
           <div class="section-caption">
@@ -1364,6 +1365,84 @@
         </form>
       </section>
     </dialog>
+    <dialog id="timechainMaintenance" class="modal history-modal" aria-labelledby="timechainMaintenanceTitle">
+      <div class="dialog-top"><span class="eyebrow">TIMECHAIN MAINTENANCE</span><button class="icon-button" type="button" data-close aria-label="Close Timechain maintenance"><svg><use href="#i-close" /></svg></button></div>
+      <h2 id="timechainMaintenanceTitle">Recovery, witnesses and review</h2>
+      <p id="timechainMaintenanceNotice" role="status" aria-live="polite"></p>
+      <fieldset id="timechainMaintenanceControls" class="native-connected-controls hidden">
+        <legend class="sr-only">Timechain maintenance controls</legend>
+        <label class="field">Saved Timechain<select id="maintenanceAgent"></select></label>
+        <p id="maintenanceSummary" class="info-box"></p>
+        <div class="native-card">
+          <h3>Recover a managed store</h3>
+          <p>Preview a validated legacy encoding repair or restore a sealed registry snapshot. Each write keeps a local copy of the original file. Re-anchor only after inspecting the recovered registry and its backup.</p>
+          <label class="field">Managed store<select id="maintenanceTarget"></select></label>
+          <div class="native-actions">
+            <button type="button" class="secondary-button" id="maintenanceEncoding">Inspect encoding</button>
+            <button type="button" class="secondary-button" id="maintenanceSnapshots">Find sealed snapshots</button>
+          </div>
+          <div id="maintenanceSnapshotChoice" class="hidden">
+            <label class="field">Verified registry snapshot<select id="maintenanceSnapshotRing"></select></label>
+            <button type="button" class="secondary-button" id="maintenanceRestoreRegistry">Preview registry restore</button>
+          </div>
+          <label class="field">Recovery reason<input id="maintenanceRecoveryReason" maxlength="512" autocomplete="off"></label>
+          <button type="button" class="secondary-button" id="maintenanceReanchor">Preview registry re-anchor</button>
+        </div>
+        <div class="native-card" id="maintenanceImmune">
+          <h3>Recover from immune lockdown</h3>
+          <p>After you verify the ledger and inspect the affected history, choose the first affected ring. Recovery appends a receipt and excludes that ring through the current head from active memory.</p>
+          <label class="field">First affected ring<input id="maintenanceFirstRing" type="number" min="1" step="1"></label>
+          <button type="button" class="secondary-button" id="maintenanceRecoverImmune">Preview quarantine and recovery</button>
+        </div>
+        <div class="native-card">
+          <h3>Local witness quorum</h3>
+          <p>Witnesses attest to ring hashes. These keys share this machine’s trust boundary. New seals are automatically attested after setup.</p>
+          <p id="maintenanceWitnessStatus" class="fine-print"></p>
+          <div id="maintenanceWitnessSetup" class="native-service-grid">
+            <label class="field">Witnesses<input id="maintenanceWitnessCount" type="number" min="1" max="16" value="3" step="1"></label>
+            <label class="field">Required agreement<input id="maintenanceWitnessThreshold" type="number" min="1" max="16" value="2" step="1"></label>
+          </div>
+          <div class="native-actions">
+            <button type="button" class="secondary-button" id="maintenanceInitWitnesses">Preview witness setup</button>
+            <button type="button" class="secondary-button" id="maintenanceVerifyWitnesses">Verify witnesses</button>
+            <button type="button" class="secondary-button" id="maintenanceAttestHead">Preview head attestation</button>
+          </div>
+        </div>
+        <div class="native-card">
+          <h3>Full corpus review</h3>
+          <p>Read ingested Continuum blocks and record a specific observation for each one. The chain keeps your place across sessions. Review is manual, and source text stays in this app.</p>
+          <p id="maintenanceCorpusStatus" class="fine-print"></p>
+          <div id="maintenanceCorpusSetup">
+            <label class="field">Review objective<input id="maintenanceCorpusObjective" maxlength="512" autocomplete="off"></label>
+            <button type="button" class="secondary-button" id="maintenanceOpenCorpus">Preview new review ledger</button>
+          </div>
+          <div class="native-actions">
+            <button type="button" class="secondary-button" id="maintenanceNextBlock">Read next block</button>
+            <button type="button" class="secondary-button" id="maintenanceCorpusReport">Validate and show report</button>
+          </div>
+          <div id="maintenanceSourceBlock" class="hidden">
+            <p id="maintenanceSourceCaption" class="fine-print"></p>
+            <pre id="maintenanceSourceText" tabindex="0" aria-label="Current source page"></pre>
+            <button type="button" class="secondary-button" id="maintenanceNextPage">Next page in this block</button>
+            <div id="maintenanceFindingControls" class="hidden">
+              <label class="field">Finding with an exact symbol or value from the block<textarea id="maintenanceFinding" rows="4" minlength="60" maxlength="4000" spellcheck="false"></textarea></label>
+              <label class="native-check"><input id="maintenanceFindingConfirmed" type="checkbox">I read the entire block and checked the finding against the source.</label>
+              <button type="button" class="secondary-button" id="maintenanceRecordFinding">Preview finding</button>
+            </div>
+          </div>
+          <pre id="maintenanceReport" class="hidden" tabindex="0" aria-label="Corpus review report"></pre>
+        </div>
+      </fieldset>
+      <section class="native-card hidden" id="maintenancePreview" aria-labelledby="maintenancePreviewTitle">
+        <h3 id="maintenancePreviewTitle" tabindex="-1">Confirm the preview</h3>
+        <pre id="maintenancePreviewText" tabindex="0"></pre>
+        <div class="native-actions">
+          <button type="button" class="primary-button" id="maintenanceApply">Apply this change</button>
+          <button type="button" class="secondary-button" id="maintenanceCancelPreview">Cancel preview</button>
+        </div>
+      </section>
+    </dialog>
+
     <dialog id="historyDialog" class="modal history-modal">
       <div class="dialog-top">
         <span class="eyebrow">TIMECHAIN INSPECTOR</span

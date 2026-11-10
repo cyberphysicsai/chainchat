@@ -27,6 +27,7 @@ import { composerCommand, mountChatCommands } from "./chat-commands.js";
 import { mountAgentSkills } from "./agent-skills.js";
 import { mountEmergencyHalt } from "./emergency-halt.js";
 import { mountTimechainBackups } from "./timechain-backup.js";
+import { mountTimechainMaintenance } from "./timechain-maintenance.js";
 const $ = (id) => document.getElementById(id);
 const localBridgePage = isLocalBridgePage(location.origin);
 let selectedBridgePort = "8790";
@@ -2806,6 +2807,8 @@ async function start() {
 nativePanel = initOpenClawSettings({ api, requireConnection: requirePair, isConnected: () => !!token, onClose: renderState,
   executeCommand: command => runComposerCommand(composerCommand(command)),
 });
+mountTimechainMaintenance({ document, api, local: localBridgePage, connected: () => !!token,
+  onChange: () => { void refreshState(); } });
 agentSkills = mountAgentSkills({ document, api, connected: () => !!token && state.executionRuntime?.backend === 'openclaw',
   agentId: () => state.agent?.id || null });
 emergencyHalt = mountEmergencyHalt({

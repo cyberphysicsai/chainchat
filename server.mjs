@@ -359,7 +359,7 @@ export async function createApp(options = {}) {
     if (selectedRecord && !cognitionFor(selectedRecord).learning) request = { ...request, learning: false };
     const mutating = ["init", "commit", "ingest", "pack_import", "dormancy", "faculty_action", "maintenance", "teach", "feedback"].includes(
       request.op,
-    );
+    ) || request.op === "advanced_maintenance" && request.phase === "apply";
     if (mutating && request.preview !== true) {
       checkCancelled(requestSession.getStore()?.signal);
       if (!(request.op === "dormancy" && request.action === "pause")) await requireLocalAccess();
@@ -2736,6 +2736,32 @@ export async function createApp(options = {}) {
             session.agentId = input.id;
             if (session.provider && session.provider.provider !== 'native') await forgetNativeRoute(session);
             return send(200, await state(session));
+          }
+          if (url.pathname === "/api/timechain/maintenance") {
+            if (!localBrowser) throw err("Open the installed local app to use Timechain maintenance.", "LOCAL_ONLY", 403);
+            await requireLocalAccess();
+            const reads = ["status", "snapshots", "witness-verify", "corpus-next", "corpus-report"];
+            const changes = ["encoding", "restore-registry", "reanchor", "immune-recover", "witness-init", "witness-attest", "corpus-open", "corpus-record"];
+            const fields = ["agentId", "action", "phase", "confirm", "previewDigest", "target", "ring", "reason", "witnesses", "threshold", "offset", "finding"];
+            if (Object.keys(input).some(key => !fields.includes(key)) || bytes(input) > 16_384)
+              throw err("Use only the supported local maintenance fields.");
+            if (input.action === "list")
+              return send(200, { agents: store.agents.map(({id, name}) => ({id, name})), selected: session.agentId });
+            if (!(reads.includes(input.action) && input.phase === undefined ||
+                  changes.includes(input.action) && ["preview", "apply"].includes(input.phase)))
+              throw err("Select a valid local maintenance operation.");
+            const target = store.agents.find(agent => agent.id === input.agentId);
+            if (!target) throw err("Select a saved Timechain.", "AGENT_REQUIRED", 409);
+            if (input.phase === "apply" && input.confirm !== true)
+              throw err("Confirm the reviewed change before applying it.", "CONFIRMATION_REQUIRED", 409);
+            assertCredentialIsolation(session.provider, input);
+            assertServiceIsolation(input);
+            return await exclusive(target, async () => {
+              await requireLocalAccess();
+              const output = await engine({ ...input, op: "advanced_maintenance", root: target.root, learning: false });
+              await requireLocalAccess();
+              return send(200, output);
+            }, { control: true });
           }
           const record = agentFor(session);
           if (url.pathname === "/api/audit/read") {

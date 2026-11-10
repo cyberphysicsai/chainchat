@@ -2219,6 +2219,11 @@ def op_search(request):
     return {"head": compact_head(tc), "search": report}
 
 
+def op_advanced_maintenance(request):
+    import advanced_maintenance
+    return advanced_maintenance.handle(request, sys.modules[__name__])
+
+
 OPERATIONS = {"init": op_init, "inspect": op_inspect, "prepare": op_prepare,
               "chat_prepare": op_chat_prepare, "chat_evaluate": op_chat_evaluate,
               "read_source_asset": op_read_source_asset,
@@ -2228,6 +2233,7 @@ OPERATIONS = {"init": op_init, "inspect": op_inspect, "prepare": op_prepare,
               "runtime_status": op_runtime_status, "dormancy": op_dormancy,
               "route": op_route, "memory": op_memory, "search": op_search,
               "faculty_action": op_faculty_action, "maintenance": op_maintenance,
+              "advanced_maintenance": op_advanced_maintenance,
               "feedback": op_feedback, "teach": op_feedback}
 
 
