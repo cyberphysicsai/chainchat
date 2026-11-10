@@ -16,35 +16,37 @@ not a sandbox boundary. Its messaging protocol deliberately forwards only fixed
 reads and never sends the model key or parent bearer into the frame.
 
 The original OpenClaw npm archive stays at the exact commitment in
-`upstream-lock.json` (OpenClaw 2026.10.10). The extracted runtime has one explicit
-metadata compatibility overlay, `early-hook-input-provenance-v2`: it forwards
+`upstream-lock.json` (OpenClaw 2026.11.2). The metadata compatibility overlay,
+`early-hook-input-provenance-v2`, forwards
 only existing `inputProvenance: params.inputProvenance` and
 `currentSourceTurnId: params.currentSourceTurnId` into the embedded-agent and CLI
 runner's same early hook contexts. These typed native fields preserve private
 asynchronous producer provenance and the framework's original client nonce for
 queued-request correlation before mandatory PoI admission. Text markers and
 transport acknowledgments never substitute for that provenance. No model, permission, tool or
-safety semantics are changed. Installers check both exact original SHA-256
-values before replacement; doctor and Gateway require both exact final hashes.
-Unknown source bytes, earlier overlay output or a new upstream version fail closed. The original npm
-SRI describes the downloaded archive; the separate overlay descriptors attest
-the two installed files. A separate, exact dependency overlay selects external
-Undici 8.12.3, Zod 4.6.7, npm 12.2.1 and Minimatch 11.0.4. These are ordinary dependency overrides,
+safety semantics are changed by that overlay. The separate
+`api-key-channel-auth-v1` overlay holds the built-in channel provider
+`/login` before auth work, removes it from the stock command registry, and
+skips usage probes in `models.authStatus` while preserving credential-status
+metadata. The installer checks all five exact original SHA-256 values before
+replacement, and doctor and Gateway require all five final hashes. The original
+npm SRI describes the downloaded archive. A separate dependency overlay selects external
+Undici 8.12.4, Zod 4.6.7, npm 12.2.2 and Minimatch 11.0.5. These are ordinary dependency overrides,
 not edits to the upstream source tarball. The runtime lockfile, setup integrity
 checks and launcher doctor validate these selections. Adoption requires actual
 Gateway and installed-application regression tests. Automatic upstream update
 checks and automatic application of updates are disabled in the managed Gateway.
 
-The external overrides do not replace embedded dependency copies. A separate
-`bundledDependencyOverlays` commitment installs official, hash-verified,
-same-major Undici 6.29.1 and ip-address 10.7.6 archives into npm's own bundled
-dependency directories after `npm ci --ignore-scripts`. Both platform installers
-apply these archives; launcher doctor verifies the actual installed versions.
-This replaces whole published dependency packages without editing their source.
-It is distinct from the two-file OpenClaw metadata overlay above. The downloaded
-npm archive and its upstream lock metadata still
-describe the original bundled copies, so a raw upstream-lock audit is not a
-measurement of these separately verified installed replacements.
+The external overrides leave embedded dependency copies intact. The published
+npm 12.2.2 archive includes fixed Undici 6.29.1. Its ip-address 10.7.5
+already includes the zone-identifier fix. After `npm ci --ignore-scripts`,
+both platform installers replace that copy with the official, hash-verified
+ip-address 10.7.6 archive, which also escapes highlighted characters in IPv6
+parse diagnostics. Launcher doctor verifies both installed versions. The npm
+lock preserves the original bundled metadata, while the installer and doctor
+attest the replacement separately.
+[ip-address advisory](https://github.com/beaugunderson/ip-address/security/advisories/GHSA-rxp7-6hxx-x8q5)
+[ip-address release changes](https://github.com/beaugunderson/ip-address/compare/v10.7.5...v10.7.6)
 
 Residual embedded findings remain:
 
@@ -52,24 +54,20 @@ Residual embedded findings remain:
   bounds fix checks limits before parsing elements; replacing the external Zod
   npm package does not apply that fix to embedded code. See the
   [upstream Zod fix](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd).
-- npm 12.2.1's published archive bundles Undici 6.29.0. The
-  [Undici advisory](https://github.com/nodejs/undici/security/advisories/GHSA-xjj6-f33q-929c)
-  specifies fixed 6.x version 6.29.1, which the separate bundled archive overlay
-  applies. A top-level override alone does not fix this copy. The bundled
-  ip-address denial-of-service finding is likewise addressed by its verified
-  10.7.6 same-major replacement. The npm package-manager dependency tree retains
-  other moderate audit findings. The
-  [npm release notes](https://github.com/npm/cli/releases/tag/v12.2.1)
-  do not establish that all its bundled dependencies are fixed.
 - The external Minimatch override includes the
   [globparts amplification fix](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249).
-  npm's bundled Minimatch 10.2.5 and Glob 13.0.6 remain separate: their published
-  fixes require new major versions and different dependency trees. They have
-  not been silently replaced with incompatible majors. The original locked tree
-  reported 34 moderate and one high findings before the explicit bundled
-  replacements; that raw lock report is retained as upstream evidence, with
-  replacement verification reported separately. No lock metadata is rewritten
-  to hide a vulnerable published npm bundle.
+  npm's bundled Minimatch 10.2.5 and Glob 13.0.6 have fixes in newer major
+  versions with different dependency trees. The November 9, 2026 npm audit of
+  the raw lock reported 33 moderate findings and zero high or critical findings.
+  The two directly affected audit paths were npm's bundled Minimatch and Glob.
+  [Glob cancellation advisory](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4)
+- The portable Node pin remains 26.13.0, the current 26.x release checked on
+  November 9, 2026. The Node project announced a 26.x security release with a
+  high-severity fix for November 11. That fix was unpublished at review time.
+  The Node distribution's separate bootstrap npm 11.20.0 bundles Undici 6.28.0
+  and ip-address 10.5.0. Setup uses it for locked installs with lifecycle scripts
+  disabled. The runtime lock audit does not cover this separate copy.
+  [Node.js November security release notice](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases)
 
 The managed UI does not expose npm/package-manager tools. Host tools are
 default-denied and require explicit per-agent grants, scope validation and fresh
@@ -124,11 +122,10 @@ backup; the adapter never blindly downgrades a database or replaces a Timechain.
 Automatic native utility routing is disabled with `agents.defaults.utilityModel:
 ""`, and native remote memory indexing/search is disabled with
 `memory.search.enabled: false`. Upstream otherwise derives utility models from
-the global native provider and defaults memory embeddings to OpenAI, independently
-of the selected chat connection. A separate explicit owner setting grant can enable
-either native feature. That route has its own provider cost and privacy terms.
-Private PoI SDK review still uses the expressly
-selected native main model; these defaults do not bypass or disable review.
+the global native provider and defaults memory embeddings to OpenAI. ChainChat
+holds automatic utility-model overrides and uses the admitted API-key model
+for its private PoI review. An explicit owner setting grant can enable native
+remote memory search with its separately configured provider.
 
 BYOK native agent runs, including admitted children, are routed to the
 owner's exact private proxy provider before native model selection. Their native

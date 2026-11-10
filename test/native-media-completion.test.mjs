@@ -52,7 +52,7 @@ test('actual pinned upstream formatter preserves the final authoritative suffix 
   skip: !process.env.CT_OPENCLAW_PACKAGE ? 'Set the pinned OpenClaw package to verify its real producer format.' : false,
 }, async () => {
   const root = process.env.CT_OPENCLAW_PACKAGE;
-  assert.equal(JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version, '2026.10.10');
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version, '2026.11.2');
   const modules = (await fs.readdir(path.join(root, 'dist'))).filter(name => /^internal-events-[\w-]+\.mjs$/u.test(name));
   assert.equal(modules.length, 1);
   // Test-only verification of the pinned producer. Production never imports

@@ -11,7 +11,7 @@ test('runtime refuses unreviewed or missing extracted metadata bytes',async t=>{
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   await assert.rejects(assertRuntimeCompatibility(root));
   const pins=JSON.parse(await fs.readFile(new URL('../openclaw/upstream-lock.json',import.meta.url),'utf8'));
-  for(const row of pins.runtimeCompatibilityOverlays[0].files){await fs.mkdir(path.dirname(path.join(root,row.path)),{recursive:true});await fs.writeFile(path.join(root,row.path),'unknown source');}
+  for(const row of pins.runtimeCompatibilityOverlays.flatMap(group=>group.files)){await fs.mkdir(path.dirname(path.join(root,row.path)),{recursive:true});await fs.writeFile(path.join(root,row.path),'unknown source');}
   await assert.rejects(assertRuntimeCompatibility(root),/missing or changed/);
 });
 
@@ -26,6 +26,8 @@ test('runtime rejects a modified source commitment before reading SDK files',asy
     await fs.writeFile(path.join(root,'upstream-lock.json'),JSON.stringify(changed));
     await assert.rejects(isolated.assertRuntimeCompatibility(root),/commitment/);
   }
+  await fs.writeFile(path.join(root,'upstream-lock.json'),JSON.stringify({...pins,runtimeCompatibilityOverlays:pins.runtimeCompatibilityOverlays.slice(0,1)}));
+  await assert.rejects(isolated.assertRuntimeCompatibility(root),/commitment/);
   const legacy=structuredClone(pins);legacy.runtimeCompatibilityOverlays[0].id='early-hook-input-provenance-v1';
   await fs.writeFile(path.join(root,'upstream-lock.json'),JSON.stringify(legacy));
   await assert.rejects(isolated.assertRuntimeCompatibility(root),/commitment/);
@@ -37,7 +39,7 @@ test('real pinned metadata overlay passes doctor and changed bytes or link owner
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'ct-compat-real-'));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const pins=JSON.parse(await fs.readFile(new URL('../openclaw/upstream-lock.json',import.meta.url),'utf8'));
-  for(const row of pins.runtimeCompatibilityOverlays[0].files){await fs.mkdir(path.dirname(path.join(root,row.path)),{recursive:true});await fs.copyFile(path.join(process.env.CT_OPENCLAW_PACKAGE,row.path),path.join(root,row.path));}
+  for(const row of pins.runtimeCompatibilityOverlays.flatMap(group=>group.files)){await fs.mkdir(path.dirname(path.join(root,row.path)),{recursive:true});await fs.copyFile(path.join(process.env.CT_OPENCLAW_PACKAGE,row.path),path.join(root,row.path));}
   assert.deepEqual(await assertRuntimeCompatibility(root),pins.runtimeCompatibilityOverlays);
   const first=path.join(root,pins.runtimeCompatibilityOverlays[0].files[0].path),bytes=await fs.readFile(first);
   const legacy=bytes.toString('utf8').replace(/^\t+currentSourceTurnId: params\.currentSourceTurnId,\n/mu,'');
@@ -50,4 +52,28 @@ test('real pinned metadata overlay passes doctor and changed bytes or link owner
   await fs.writeFile(first,bytes);
   const alias=path.join(root,'alias.mjs');await fs.link(first,alias);
   await assert.rejects(assertRuntimeCompatibility(root),/missing or changed/);
+});
+
+test('pinned channel login is held before auth work and native status skips usage probing', {
+  skip:!process.env.CT_OPENCLAW_PACKAGE&&'requires exact reviewed SDK',
+},async()=>{
+  const packageRoot=process.env.CT_OPENCLAW_PACKAGE;
+  const overlays=await assertRuntimeCompatibility(packageRoot);
+  const [flow,registry,status]=overlays.find(row=>row.id==='api-key-channel-auth-v1').files;
+  const load=row=>import(pathToFileURL(path.join(packageRoot,row.path)).href);
+  const {o:prepareProviderChannelLogin}=await load(flow);
+  const never=()=>{throw new Error('Unadmitted provider auth work ran.');};
+  for(const commandText of ['/login','/login codex','/login refresh','/login choice test','/login cancel']){
+    const result=await prepareProviderChannelLogin({commandText,refreshAuth:never,answerChoice:never,cancelLogin:never});
+    assert.equal(result.status,'reply');
+    assert.match(result.reply.text,/configure a provider API key/);
+  }
+  assert.equal(await prepareProviderChannelLogin({commandText:'/status'}),null);
+  const {t:getChatCommands}=await load(registry);
+  const keys=getChatCommands().map(row=>row.key);
+  assert.ok(keys.includes('model'));
+  assert.ok(!keys.includes('login'));
+  const authStatus=await fs.readFile(path.join(packageRoot,status.path),'utf8');
+  assert.doesNotMatch(authStatus,/\b(?:getProviderUsageRuntimeSnapshot|readProviderUsageStaleWhileRevalidate)\(/u);
+  assert.match(authStatus,/"models\.authStatus": async/u);
 });

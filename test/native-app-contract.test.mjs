@@ -41,6 +41,16 @@ test('paired native APIs retain BYOK privately, reject invented model/tool autho
   const ownerKey=identity.agentId+':'+identity.genesisHash;
   let parentHead=(await engine({op:'verify',root:parent.root})).head;
   assert.equal((await call('/api/provider',{provider:'openai',model:'byok-fixture',apiKey:'synthetic-private-byok-contract'})).status,200);
+  assert.equal((await call('/api/openclaw/auth')).body.action,'status');
+  assert.equal((await call('/api/openclaw/auth',{action:'key',provider:'openai',apiKey:'sk-synthetic-native-key'})).body.action,'key');
+  assert.equal((await call('/api/openclaw/auth',{action:'logout',provider:'openai'})).body.action,'logout');
+  for (const legacy of [{action:'login',authChoice:'openai/openai-token-sharing',sessionId:'fixture'},
+    {action:'next',sessionId:'fixture'}, {action:'cancel',sessionId:'fixture'}, {action:'wizard-status',sessionId:'fixture'},
+    {action:'key',provider:'anthropic',apiKey:'sk-ant-oat-fixture'}, {action:'key',provider:'claude-cli',apiKey:'synthetic-fixture'}])
+    assert.equal((await call('/api/openclaw/auth',legacy)).body.code,'OPENCLAW_NATIVE_AUTH_INVALID');
+  assert.equal((await call('/api/openclaw/provider',{action:'enable-claude-code'})).status,400);
+  assert.equal((await call('/api/openclaw/provider',{model:'claude-cli/sonnet'})).status,400);
+  assert.equal((await call('/api/openclaw/provider',{model:'openai-codex/codex'})).status,400);
   assert.equal((await call('/api/openclaw/provider',{model:'fixture/unconfigured'})).status,409);
   assert.equal((await call('/api/openclaw/provider',{model:'fixture/first',apiKey:'forbidden-override'})).status,400);
   const switched=await call('/api/openclaw/provider',{model:'fixture/second'});assert.equal(switched.status,200);assert.equal(switched.body.provider.model,'fixture/second');

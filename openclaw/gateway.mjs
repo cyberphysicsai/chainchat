@@ -11,13 +11,13 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { once } from "node:events";
-import { validateProvider, validateNativeProvider, assertCredentialIsolation, isRetiredProviderCredential } from "../lib/providers.mjs";
+import { validateProvider, validateNativeProvider, assertCredentialIsolation, isRetiredProviderCredential, isUnsupportedModelCredential } from "../lib/providers.mjs";
 import { createNativeControls, readControlOverlay, mergeControlOverlay, validateControlPatch, NATIVE_PREFERENCES, controlSessionKey, redactNativeControl } from "../lib/openclaw-controls.mjs";
 import { createPrivateNativeServices } from '../lib/openclaw-services.mjs';
 import { createNativeBrowserInspector } from '../lib/native-browser-inspection.mjs';
 import { safeInvocationError, invocationError } from '../lib/runtime-errors.mjs';
 
-import { nativeModelCatalogue, nativeModelRef, requireNativeModel, validateNativeProviderEntry,bundledDefaultPlugins } from '../lib/native-provider-controls.mjs';
+import { nativeApiKeyStatus, nativeModelCatalogue, nativeModelRef, requireNativeModel, validateNativeProviderEntry,bundledDefaultPlugins } from '../lib/native-provider-controls.mjs';
 import {NativeRunBindings} from '../lib/native-run-bindings.mjs';
 import {validateNativeAttachments} from '../lib/native-attachments.mjs';
 import {parseNativeMediaCompletion} from '../lib/native-media-completion.mjs';
@@ -25,7 +25,7 @@ import {NativeSecrets} from '../lib/native-secrets.mjs';
 import {createNativeHeartbeatScratch,readNativeHeartbeatMonitor} from '../lib/native-heartbeat-scratch.mjs';
 import {waitForNativeSessionIdle} from '../lib/native-session-idle.mjs';
 import {assertRuntimeCompatibility} from './runtime-compatibility.mjs';
-import {modelRouteForConfig} from './plugin/model-route.mjs';
+import {isRemovedNativeModel, isRemovedNativeProvider, modelRouteForConfig} from './plugin/model-route.mjs';
 import {prepareNativeUpgrade,completeNativeUpgrade} from './native-upgrade.mjs';
 import {createNativeControlConnection,stopNativeControlClient} from './native-control-connection.mjs';
 import {createRuntimeHealth} from './runtime-health.mjs';
@@ -33,7 +33,7 @@ import {createRuntimeStderrEvidence} from './runtime-stderr-evidence.mjs';
 
 import { CONTEXT_POLICY } from './plugin/compaction.mjs';
 
-export const OPENCLAW_VERSION = "2026.10.10";
+export const OPENCLAW_VERSION = "2026.11.2";
 const MAX_BYTES = 24 * 1024 * 1024;
 const PROVIDERS = Object.freeze({
   openai: { id: "chainchat-openai", api: "openai-responses", prefix: "/openai/v1", endpoint: "/responses" },
@@ -42,6 +42,8 @@ const PROVIDERS = Object.freeze({
   gemini: { id: "chainchat-gemini", api: "google-generative-ai", prefix: "/gemini", endpoint: null },
 });
 const fail = (message, code = "OPENCLAW_RUNTIME", status = 502) => Object.assign(new Error(message), { code, status });
+const nativeKeyRequired = () => fail('This native model cannot verify an API-key-only route. Connect an API key directly in ChainChat to use the provider.', 'OPENCLAW_NATIVE_API_KEY_REQUIRED', 409);
+const nativeAuthFailed = () => fail('The local native API-key operation did not complete.', 'OPENCLAW_NATIVE_AUTH_FAILED', 422);
 export function nativeControlCloseError(code, reason) {
   // Close frames are untrusted transport data. Expose only this exact, known
   // watchdog condition; arbitrary native text must never reach the UI/logs.
@@ -357,7 +359,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
   let browserHosts = [], reasoningCapable = false, capabilitiesInitialized = false;
   let contextWindow = modelContextTokens || 131072, outputCeiling = 32768;
   let managedServices = {};
-  let nativeSelection = null, nativeProviders = {}, nativeAuthConfiguration = {}, nativeProvidersLoaded = false, nativeCatalogueDirty = true;
+  let nativeSelection = null, nativeProviders = {}, nativeAuthConfiguration = {}, nativeProvidersLoaded = false;
   let lastServiceEnvironmentHash = null;
   const nativeEvents = new Set();
   const nativeControl = createNativeControlConnection({
@@ -382,7 +384,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     authenticationError: () => fail('Native OpenClaw control authentication failed.', 'OPENCLAW_CONTROL_AUTH'),
     timeoutError: () => fail('The native OpenClaw control connection did not authenticate.', 'OPENCLAW_CONTROL_TIMEOUT'),
   });
-  const nativeCredentialValues=new Set(),sensitiveNativeWizards=new Set();
+  const nativeCredentialValues=new Set();
   const dynamicInvocations = new Map(), pendingDynamic = new Map(), routeInvocations = new Map(),dynamicRows=new Set();
   let nativeSourcesReady=!deferNativeSources,resolveNativeReadiness,nativeUpgrade;
   const nativeReadiness=new Promise(resolve=>{resolveNativeReadiness=resolve;});
@@ -611,7 +613,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
         browser: { enabled: true, evaluateEnabled: false, defaultProfile: 'openclaw', attachOnly: false, noSandbox: false,
           ssrfPolicy: { dangerouslyAllowPrivateNetwork: false, allowedHostnames: browserHosts }, profiles: { openclaw: { cdpPort: identity.browserPort } } },
         models: { mode: "merge", catalogRefresh: { enabled: false }, providers: { ...nativeProviders, ...providers } },
-        ...(Object.keys(nativeAuthConfiguration).length ? {auth: nativeAuthConfiguration} : {}),
+        ...(Object.keys(nativeAuthConfiguration).length ? {auth: keyAuthConfiguration(nativeAuthConfiguration)} : {}),
         discovery: { mdns: { mode: "off" } }, cron: { enabled: false },
         // Update only through the reviewed downstream installer/pin. This also
         // suppresses native background update checks and anonymous update pings.
@@ -624,7 +626,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       const controlledConfiguration = mergeControlOverlay(baseConfiguration, managedServices);
       controlledConfiguration.plugins.allow=[...new Set([...baseConfiguration.plugins.allow,...(controlledConfiguration.plugins.allow||[])])];
       const overlay = pendingOverlay || (await readControlOverlay(directory)).patch;
-      const nativeSecretProjection=await nativeSecretStore.project(mergeControlOverlay(controlledConfiguration, overlay));
+      const nativeSecretProjection=await nativeSecretStore.project(keySafeOverlay(controlledConfiguration, overlay));
       const configuration = nativeSecretProjection.config;
       lastConfiguration = controlledConfiguration;
       const configPath = path.join(directory, "gateway.json");
@@ -648,6 +650,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
         !/^(?:NODE_OPTIONS|NODE_INSPECT_RESUME_ON_START|(?:HTTPS?|ALL|NO)_PROXY)$/i.test(name)));
       Object.assign(environment, { OPENCLAW_STATE_DIR: runtimeState, OPENCLAW_CONFIG_PATH: configPath,
         XDG_CACHE_HOME: path.join(runtimeState, 'cache'),
+        CODEX_HOME: path.join(runtimeState, 'external-codex-disabled'), CLAUDE_CONFIG_DIR: path.join(runtimeState, 'external-claude-disabled'),
         OPENCLAW_NO_RESPAWN: "1", CHAINCHAT_GATEWAY_TOKEN: gatewayToken,
         CHAINCHAT_PROVIDER_TOKEN: proxyToken, CHAINCHAT_BROKER_TOKEN: broker.token,
         NO_PROXY: "127.0.0.1,localhost,::1" });
@@ -733,6 +736,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
   const services = createPrivateNativeServices({ rpc: nativeRpc, subscribe: subscribeNativeEvents, nodePath });
   const controls = createNativeControls({
     nativeToolSurface:sessionKey=>nativeRpc('cypher-tempre.native.toolCatalogue',sessionKey?{sessionKey}:{}),
+    nativeModelView:nativeModels,
     rpc: nativeRpc, getRuntime: status, readOverlay: () => readControlOverlay(directory),
     nativeCapabilities,
     nativeProvider:()=>Boolean(nativeSelection),
@@ -774,7 +778,15 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       const previous = (await readControlOverlay(directory)).patch;
       pendingOverlay = patch;
       try {
-        await nativeRpc('config.set', { raw: JSON.stringify(mergeControlOverlay(base, patch)), baseHash: current.hash });
+        const utility = patch.agents?.defaults?.utilityModel;
+        if (utility) {
+          if (!nativeModelRef(utility)) throw nativeKeyRequired();
+          await assertNativeKeyRoute(utility);
+        }
+        if (patch.memory?.search?.enabled && patch.memory.search.provider !== 'local')
+          throw fail('Managed native memory search requires local embeddings.', 'OPENCLAW_SETTING_GUARDED', 403);
+        const proposed = keySafeOverlay(base, patch);
+        await nativeRpc('config.set', { raw: JSON.stringify(proposed), baseHash: current.hash });
         await stopChild(); await start();
       } catch (error) {
         const safe = redactNativeControl({ code: error?.code || 'OPENCLAW_CONFIG_APPLY_FAILED', message: String(error?.message || 'Native configuration apply failed.') },
@@ -845,12 +857,14 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       if (value.version !== 1 || value.model !== null && !nativeModelRef(value.model) || !value.providers || typeof value.providers !== 'object' || Array.isArray(value.providers))
         throw fail('The saved native provider selection is invalid.', 'OPENCLAW_CONFIG_REJECTED');
       for (const [id, config] of Object.entries(value.providers)) {
+        if (isRemovedNativeProvider(id) || ['oauth','token'].includes(config?.auth)) continue;
         const {apiKey:profileId,...metadata}=config;
         validateNativeProviderEntry(id,metadata);
         if(profileId !== undefined && (typeof profileId!=='string' || value.auth?.profiles?.[profileId]?.provider !== id || value.auth.profiles[profileId].mode !== 'api_key'))
           throw fail('A saved native credential reference is invalid.','OPENCLAW_CONFIG_REJECTED');
+        nativeProviders[id]=config;
       }
-      nativeSelection = value.model; nativeProviders = value.providers;
+      nativeSelection = isRemovedNativeModel(value.model) ? null : value.model;
       nativeAuthConfiguration = value.auth && typeof value.auth === 'object' && !Array.isArray(value.auth) ? value.auth : {};
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
     nativeProvidersLoaded = true;
@@ -917,6 +931,40 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     await fs.mkdir(directory, {recursive:true,mode:0o700});
     await atomicJson(path.join(directory, 'native-providers.json'), {version:1,model:nativeSelection,providers:nativeProviders,auth:nativeAuthConfiguration});
   }
+  function keyAuthConfiguration(auth) {
+    if (!auth || typeof auth !== 'object' || Array.isArray(auth)) return {};
+    const profiles = Object.fromEntries(Object.entries(auth.profiles || {}).filter(([, row]) => row?.mode === 'api_key' && !isRemovedNativeProvider(row.provider)));
+    const order = Object.fromEntries(Object.entries(auth.order || {}).filter(([, rows]) => Array.isArray(rows))
+      .map(([provider, rows]) => [provider, rows.filter(id => Object.hasOwn(profiles, id))]).filter(([, rows]) => rows.length));
+    return {...auth, profiles, ...(Object.keys(order).length || auth.order ? {order} : {})};
+  }
+  function keySafeOverlay(base, patch) {
+    const merged = mergeControlOverlay(base, patch);
+    const retained = Object.values(nativeAuthConfiguration.profiles || {}).filter(row => row?.mode !== 'api_key');
+    const defaults = merged.agents?.defaults;
+    const utility = defaults?.utilityModel;
+    if (utility && (!nativeModelRef(utility) || retained.some(row => typeof row?.provider === 'string' && row.provider.toLowerCase() === utility.split('/')[0].toLowerCase())))
+      defaults.utilityModel = '';
+    const search = merged.memory?.search;
+    if (search?.enabled) {
+      if (search.provider !== 'local') search.enabled = false;
+      else search.fallback = 'none';
+    }
+    return merged;
+  }
+  async function readNativeKeyStatus(agentId = 'main') {
+    try { return nativeApiKeyStatus(await nativeRpc('models.authStatus', {agentId})); }
+    catch { throw nativeAuthFailed(); }
+  }
+  async function assertNativeKeyRoute(model, sessionKey) {
+    const provider = model.split('/')[0].toLowerCase();
+    if (isRemovedNativeProvider(provider)) throw nativeKeyRequired();
+    const agentId = /^agent:([A-Za-z0-9_-]{1,64}):/u.exec(sessionKey || '')?.[1] || 'main';
+    if ((await readNativeKeyStatus(agentId)).disabledProviders.has(provider)) throw nativeKeyRequired();
+  }
+  async function assertNativeMediaKeyRoute() {
+    if ((await readNativeKeyStatus()).disabledProviders.size) throw nativeKeyRequired();
+  }
   async function nativeModels(nativeIdentity) {
     if (nativeIdentity?.agentId) {
       const key=controlSessionKey(nativeIdentity);
@@ -924,10 +972,11 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       nativeIdentityKeys.add(key);
     }
     await start();
-    const result = await nativeRpc('models.list', {agentId:'main', includeDetails:true, includeProviderCapabilities:true, includeDefaultModels:true, view:'all',...(nativeCatalogueDirty?{refresh:true}:{})}, {timeoutMs:120000});
-    nativeCatalogueDirty=false;
+    const {disabledProviders} = await readNativeKeyStatus();
+    const result = await nativeRpc('models.list', {agentId:'main', includeDetails:true, includeDefaultModels:true, view:'all',preparedOnly:true}, {timeoutMs:120000});
     checkServiceIsolation(result);
-    return nativeModelCatalogue(result, nativeSelection || '');
+    const current = nativeSelection && !disabledProviders.has(nativeSelection.split('/')[0].toLowerCase()) ? nativeSelection : '';
+    return nativeModelCatalogue({...result, models:result.models?.filter(row => !disabledProviders.has(row?.provider?.toLowerCase()))}, current);
   }
   async function setNativeModel(nativeIdentity, id) {
     if (active) throw fail('Wait for the active turn before changing the native default.', 'OPENCLAW_CONTROL_BUSY', 409);
@@ -959,65 +1008,65 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     const checked = validateNativeProviderEntry(provider, configuration), previous = nativeProviders;
     checkServiceIsolation(checked); await start();
     const current = await nativeRpc('config.get', {});
-    const proposed = mergeControlOverlay(lastConfiguration, (await readControlOverlay(directory)).patch);
+    const proposed = keySafeOverlay(lastConfiguration, (await readControlOverlay(directory)).patch);
     proposed.models.providers = {...proposed.models.providers,[provider]:checked};
     // Upstream performs its full native API, endpoint and model schema checks.
     // No caller can replace the Gateway, enforcement plugin or private routes.
     await nativeRpc('config.set', {raw:JSON.stringify(proposed),baseHash:current.hash});
-    nativeProviders = {...nativeProviders,[provider]:checked};nativeCatalogueDirty=true;
+    nativeProviders = {...nativeProviders,[provider]:checked};
     try { await saveNativeProviders(); await stopChild(); await start(); }
     catch (error) { nativeProviders = previous; await saveNativeProviders(); await stopChild(); await start().catch(()=>{}); throw error; }
     return {ok:true,provider,notice:'Native credentials are configured separately and remain in the local OpenClaw credential store.'};
   }
   async function nativeAuth({identity:nativeIdentity, action='status', ...input} = {}) {
-    if (nativeIdentity?.agentId) controlSessionKey(nativeIdentity); await start();
-    if (active && action !== 'status') throw fail('Wait for the active turn before changing native authentication.', 'OPENCLAW_CONTROL_BUSY', 409);
     const bounded = (value, limit=512) => typeof value === 'string' && value.length > 0 && value.length <= limit && !/[\0\r\n]/u.test(value);
     const only = keys => Object.keys(input).every(key => keys.includes(key));
+    const validProvider = bounded(input.provider,64) && /^[a-z0-9][a-z0-9_-]*$/u.test(input.provider) &&
+      !input.provider.startsWith('chainchat-') && !isRemovedNativeProvider(input.provider);
     let method, params;
-    if (action === 'status' && only([])) { method='models.authStatus'; params={agentId:'main'}; }
-    else if (action === 'key' && only(['provider','apiKey']) && bounded(input.provider,64) && /^[a-z0-9][a-z0-9_-]*$/u.test(input.provider) && !input.provider.startsWith('chainchat-') && bounded(input.apiKey,16384) && !isRetiredProviderCredential(input.apiKey)) {
+    if (action === 'status' && only([])) {
+      if (nativeIdentity?.agentId) controlSessionKey(nativeIdentity);
+      return redactNativeControl((await readNativeKeyStatus()).publicStatus, privateServiceSecrets());
+    }
+    if (action === 'key' && only(['provider','apiKey']) && validProvider && bounded(input.apiKey,16384) &&
+        !isRetiredProviderCredential(input.apiKey) && !isUnsupportedModelCredential(input.apiKey)) {
       method='models.authSetApiKey'; params={agentId:'main',provider:input.provider,apiKey:input.apiKey};
-    } else if (action === 'login' && only(['authChoice','sessionId']) && bounded(input.authChoice) && bounded(input.sessionId)) {
-      method='models.authLogin'; params={agentId:'main',authChoice:input.authChoice,sessionId:input.sessionId};
-    } else if (action === 'next' && only(['sessionId','answer']) && bounded(input.sessionId) && (input.answer === undefined || input.answer && typeof input.answer === 'object' && !Array.isArray(input.answer) && Buffer.byteLength(JSON.stringify(input.answer)) <= 65536)) {
-      method='wizard.next'; params={sessionId:input.sessionId,...(input.answer ? {answer:input.answer} : {})};
-    } else if (action === 'cancel' && only(['sessionId']) && bounded(input.sessionId)) { method='wizard.cancel'; params={sessionId:input.sessionId}; }
-    else if (action === 'wizard-status' && only(['sessionId']) && bounded(input.sessionId)) { method='wizard.status'; params={sessionId:input.sessionId}; }
-    else if (action === 'logout' && only(['provider','profileIds']) && bounded(input.provider,64) && (!input.profileIds || Array.isArray(input.profileIds) && input.profileIds.length > 0 && input.profileIds.length <= 64 && input.profileIds.every(value=>bounded(value)))) {
+    } else if (action === 'logout' && only(['provider','profileIds']) && validProvider && (input.profileIds === undefined ||
+        Array.isArray(input.profileIds) && input.profileIds.length > 0 && input.profileIds.length <= 64 && input.profileIds.every(value=>bounded(value)))) {
       method='models.authLogout'; params={agentId:'main',provider:input.provider,...(input.profileIds ? {profileIds:input.profileIds} : {credentialType:'api_key'})};
-    } else throw fail('This native authentication operation is invalid.', 'OPENCLAW_NATIVE_AUTH_INVALID', 400);
-    const remember=value=>{if(typeof value==='string'&&value.length>0&&value.length<=65536){if(nativeCredentialValues.size>=256)throw fail('Restart before adding more native credentials.','OPENCLAW_NATIVE_AUTH_FAILED',409);nativeCredentialValues.add(value);}};
-    if(action==='key')remember(input.apiKey);
-    if(action==='next'&&sensitiveNativeWizards.has(input.sessionId)) {
-      const capture=value=>{if(typeof value==='string')remember(value);else if(value&&typeof value==='object')Object.values(value).forEach(capture);};capture(input.answer?.value);
+    } else throw fail('Use the native provider API-key controls.', 'OPENCLAW_NATIVE_AUTH_INVALID', 400);
+    if (nativeIdentity?.agentId) controlSessionKey(nativeIdentity);
+    await start();
+    if (active) throw fail('Wait for the active turn before changing native authentication.', 'OPENCLAW_CONTROL_BUSY', 409);
+    if (action === 'key') {
+      if (nativeCredentialValues.size >= 256) throw fail('Restart before adding more native credentials.', 'OPENCLAW_NATIVE_AUTH_FAILED', 409);
+      nativeCredentialValues.add(input.apiKey);
+    } else if (input.profileIds) {
+      const {publicStatus} = await readNativeKeyStatus();
+      const profiles = publicStatus.providers.find(row => row.provider === input.provider)?.profiles || [];
+      if (input.profileIds.some(id => !profiles.some(row => row.profileId === id && row.logoutSupported)))
+        throw fail('Select a saved native API key to remove.', 'OPENCLAW_NATIVE_AUTH_INVALID', 400);
     }
     let result;
     try { result = await nativeRpc(method, params, {timeoutMs:120000}); }
-    catch { throw fail('Native authentication did not complete. Inspect the local provider sign-in and try again.', 'OPENCLAW_NATIVE_AUTH_FAILED', 422); }
-    if(input.sessionId){if(result?.step?.sensitive===true)sensitiveNativeWizards.add(input.sessionId);else sensitiveNativeWizards.delete(input.sessionId);}
-    if (['key','next','logout'].includes(action)) {
-      const current = await nativeRpc('config.get', {});
-      // config.get is redacted. Persist metadata only; credential material is
-      // exclusively native SQLite state and never imported from this response.
-      nativeAuthConfiguration = structuredClone(current.config?.auth || {});
-      if(action==='key' && typeof result?.profileId==='string' && nativeProviders[input.provider]) {
-        if(nativeAuthConfiguration.profiles?.[result.profileId]?.provider!==input.provider)
-          throw fail('Native credential ownership metadata could not be verified.','OPENCLAW_NATIVE_AUTH_FAILED',422);
-        nativeProviders={...nativeProviders,[input.provider]:{...nativeProviders[input.provider],apiKey:result.profileId}};
-      }
-      if(action==='logout') {
-        nativeProviders=Object.fromEntries(Object.entries(nativeProviders).map(([id,config])=>{
-          if(config.apiKey && !nativeAuthConfiguration.profiles?.[config.apiKey]) {const {apiKey,...metadata}=config;return[id,metadata];}
-          return[id,config];
-        }));
-      }
-      nativeCatalogueDirty=true;
-      await saveNativeProviders();
+    catch { throw nativeAuthFailed(); }
+    const current = await nativeRpc('config.get', {});
+    // Store key metadata only. OpenClaw owns the credential values on disk.
+    const previousProfiles = Object.fromEntries(Object.entries(nativeAuthConfiguration.profiles || {}).filter(([, row]) => row?.mode !== 'api_key'));
+    const keyAuth = keyAuthConfiguration(current.config?.auth);
+    nativeAuthConfiguration = {...keyAuth, profiles:{...previousProfiles, ...keyAuth.profiles}};
+    if(action==='key' && typeof result?.profileId==='string' && nativeProviders[input.provider]) {
+      if(nativeAuthConfiguration.profiles?.[result.profileId]?.provider!==input.provider) throw nativeAuthFailed();
+      nativeProviders={...nativeProviders,[input.provider]:{...nativeProviders[input.provider],apiKey:result.profileId}};
     }
-    const answerValues=[];const redactAnswer=(value,depth=0)=>{if(depth>24)return;if(typeof value==='string'&&value.length)answerValues.push(value);else if(value&&typeof value==='object')Object.values(value).forEach(child=>redactAnswer(child,depth+1));};
-    if(action==='next')redactAnswer(input.answer?.value);
-    return redactNativeControl(result, [input.apiKey,...answerValues,...privateServiceSecrets()].filter(Boolean));
+    if(action==='logout') {
+      nativeProviders=Object.fromEntries(Object.entries(nativeProviders).map(([id,config])=>{
+        if(config.apiKey && !nativeAuthConfiguration.profiles?.[config.apiKey]) {const {apiKey,...metadata}=config;return[id,metadata];}
+        return[id,config];
+      }));
+    }
+    await saveNativeProviders();
+    return redactNativeControl(result, privateServiceSecrets());
   }
   async function utilitySession(nativeIdentity,requestedSessionKey,signal) {
     const selectedSessionKey = controlSessionKey(nativeIdentity), sessionKey = requestedSessionKey || selectedSessionKey;
@@ -1043,6 +1092,8 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
   }
   async function completeNative({identity:nativeIdentity,sessionKey:requestedSessionKey,system,messages,maxTokens=4096,purpose,signal} = {}) {
     const sessionKey=await utilitySession(nativeIdentity,requestedSessionKey,signal);
+    if (!nativeSelection) throw nativeKeyRequired();
+    await assertNativeKeyRoute(nativeSelection);
     const payload = {sessionKey,system,messages,maxTokens,purpose}; checkServiceIsolation(payload);
     // Deliberately not serialized behind generation: finalize() awaits this
     // tool-free semantic review while that same admitted generation is active.
@@ -1058,6 +1109,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     if(!mediaRoot||typeof assetId!=='string'||!/^[a-f0-9]{64}$/u.test(assetId)||!['describe-image','describe-video','transcribe-audio'].includes(operation))
       throw fail('Choose an owned native media asset and supported operation.','NATIVE_MEDIA_INVALID',400);
     const sessionKey=await utilitySession(nativeIdentity,requestedSessionKey,signal);
+    await assertNativeMediaKeyRoute();
     let result;
     try{result=await nativeRpc('cypher-tempre.native.media',{sessionKey,assetId,operation},{timeoutMs:requestTimeoutMs});}
     catch(error){const code=error?.gatewayCode||error?.code;throw fail('The native media analysis was held.',/^[A-Z_]+$/u.test(code||'')?code:'NATIVE_MEDIA_FAILED');}
@@ -1095,12 +1147,14 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
         if(closed)throw fail('This OpenClaw manager is closed.','OPENCLAW_CLOSED');
         await owner.context.authorize?.();
         const config = owner.config.provider === 'native' ? validateNativeProvider(owner.config) : validateProvider(owner.config);
+        if (config.provider === 'native') await assertNativeKeyRoute(config.model, request.sessionKey);
         const controller = new AbortController(), capability = config.provider === 'native' ? undefined : secret();
         const invocationId = randomUUID(), sessionKey = request.sessionKey;
         const abortNative=()=>{controller.abort();if(!closed)void nativeRpc('chat.abort',{sessionKey,...(!request.runId?.startsWith('context-assembly:')?{runId:request.runId}:{})}).catch(()=>{});};
         const args = {messages:[{role:'user',content:input}],maxTokens:Math.min(config.maxOutputTokens || 4096,32768)};
         const context = {...owner.context,nativeProvider:config.provider==='native',modelRouteCapability:capability,expectedNativeRunId:request.runId,
           signal:controller.signal,assertContentIsolation:checkServiceIsolation,
+          assertNativeModel:provider=>assertNativeKeyRoute(provider,sessionKey), assertNativeMediaKeyRoute,
           ...(binding.sourceId?{nativeSourceId:binding.sourceId}:{}),
           ...(binding.mediaTask?{mediaTask:binding.mediaTask,mediaTaskStatus:binding.mediaTaskStatus,mediaTaskReferences:binding.mediaTaskReferences,mediaTaskProof:binding.mediaTaskProof,
             verifyMediaTask:(proof,expected)=>runBindings.verifyMediaTask(proof,expected)}:{}),
@@ -1343,7 +1397,9 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     const ownNativeGoal = !context.memoryPaused && native && context.nativeIdentity && context.purpose === 'candidate' &&
       native.sessionKey === controlSessionKey(context.nativeIdentity) &&
       (selected?.entry?.goal || native.intent?.kind === 'session-goal-start' || native.goalOperation?.action === 'resume');
-    const registeredContext = { ...context, nativeProvider, modelRouteCapability: nativeProvider ? undefined : modelRouteCapability, assertContentIsolation: checkServiceIsolation, ...(browserInvocation ? { browserInvocation } : {}),
+    const registeredContext = { ...context, nativeProvider, modelRouteCapability: nativeProvider ? undefined : modelRouteCapability, assertContentIsolation: checkServiceIsolation,
+      assertNativeModel:provider=>assertNativeKeyRoute(provider,sessionKey), assertNativeMediaKeyRoute,
+      ...(browserInvocation ? { browserInvocation } : {}),
       ...((native||nativeProvider)?{expectedClientInputId:native?.goalOperation?.operationId||invocationId}:{}),
       goalAuthority: ownNativeGoal ? { enabled: true, sessionKey, ...(selected?.entry?.goal?.id ? { goalId: selected.entry.goal.id } : {}) } : undefined,
       readNativeGoal: ownNativeGoal ? async () => {
@@ -1405,6 +1461,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     let responseComplete = false;
     try {
       checkSignal(args.signal);
+      if (nativeProvider) await assertNativeKeyRoute(config.model,sessionKey);
       if (Object.keys(inherited).length && !native) await nativeRpc('sessions.patch', { key: sessionKey, ...inherited });
       if (native || nativeProvider) {
         await nativeRpc('sessions.patch', { key: sessionKey, model: nativeProvider ? config.model : `${PROVIDERS[config.provider].id}/route` });
@@ -1474,6 +1531,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     if (!nativeProvider) await synchronizeModelCapabilities({ ...context.modelCapabilities,
       contextWindow: config.contextWindow ?? (modelContextTokens || 131072), maxOutputTokens: config.maxOutputTokens ?? 32768 });
     await start(); await assertEnforcementHealthy();
+    if (nativeProvider) await assertNativeKeyRoute(config.model,sessionKey);
     const selected = await nativeRpc('sessions.describe', { key: sessionKey, includeDerivedTitles: false, includeLastMessage: false });
     if (!selected.session?.sessionId) return { ok: true, compacted: false, reason: 'No native conversation exists for this Timechain yet.' };
     const operationId = randomUUID(), controller = new AbortController();

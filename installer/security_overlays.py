@@ -16,7 +16,6 @@ import tempfile
 import urllib.request
 
 PINS = {
-    'undici': ('6.29.1', '29c4b8e0b2d86cb8795571c1959012ce057a14ecfd34858335f47c31e770a04f', 'sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA=='),
     'ip-address': ('10.7.6', 'd593a65a5ffa85e704ffd4b2c7220d2c5c3ff879264416f694b2a15d124be7ca', 'sha512-00LYkM6byILa9eQIx6qoaXCM40xTLd56AZ4vyaPW3YTyb49VZYPo5xsiAq4tuQ54GH4R7gVdYScJ1B7B77PuTg=='),
 }
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -67,11 +66,13 @@ def apply(application, cache):
     runtime = application / 'openclaw/runtime'
     if not runtime.is_dir() or runtime.is_symlink() or runtime.resolve() != runtime:
         raise ValueError('The owned runtime directory is invalid.')
-    pins = json.loads((application / 'openclaw/upstream-lock.json').read_text(encoding='utf-8'))
+    pins = json.loads((application / 'openclaw/upstream-lock.json').read_text(encoding='utf-8')).get('bundledDependencyOverlays')
+    if not isinstance(pins, list) or len(pins) != 1 or not isinstance(pins[0], dict):
+        raise ValueError('The required bundled security overlay commitment is missing or duplicated.')
+    validate_pin(pins[0])
     cache.mkdir(parents=True, exist_ok=True)
     results = []
-    for pin in pins.get('bundledDependencyOverlays', []):
-        validate_pin(pin)
+    for pin in pins:
         archive_file = cache / (pin['name'] + '-' + pin['version'] + '-' + pin['sha256'] + '.tgz')
         if archive_file.exists():
             if not archive_file.is_file() or archive_file.is_symlink() or archive_file.stat().st_size > 4 * 1024 * 1024:

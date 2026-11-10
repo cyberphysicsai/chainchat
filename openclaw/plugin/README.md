@@ -1,6 +1,6 @@
 # Cypher Tempre OpenClaw enforcement plugin
 
-This module targets the pinned OpenClaw `2026.10.10` public plugin contract. It
+This module targets the pinned OpenClaw `2026.11.2` public plugin contract. It
 registers prompt preparation, input admission, pre-tool decisions, finalization,
 and reply-delivery checks through `api.on`. It does not modify upstream files or
 replace the native Timechain format.

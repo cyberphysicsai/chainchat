@@ -12,6 +12,17 @@ overlay = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(overlay)
 
 class SecurityOverlayTests(unittest.TestCase):
+    def test_missing_bundled_commitment_holds_before_creating_cache(self):
+        with tempfile.TemporaryDirectory(prefix='ct-overlay-test-') as directory:
+            application = Path(directory)
+            runtime = application / 'openclaw/runtime'
+            runtime.mkdir(parents=True)
+            (runtime.parent / 'upstream-lock.json').write_text('{}', encoding='utf-8')
+            cache = application / 'cache'
+            with self.assertRaisesRegex(ValueError, 'commitment is missing'):
+                overlay.apply(application, cache)
+            self.assertFalse(cache.exists())
+
     def test_reviewed_archive_pin_and_tamper_refusal(self):
         pin = json.loads((ROOT / 'openclaw/upstream-lock.json').read_text())['bundledDependencyOverlays'][0]
         overlay.validate_pin(pin)
@@ -33,7 +44,7 @@ class SecurityOverlayTests(unittest.TestCase):
 
     def test_verified_extraction_preserves_exact_file_bytes_without_lifecycle_execution(self):
         output = io.BytesIO()
-        content = b'{"name":"undici","version":"6.29.1","scripts":{"postinstall":"never-run"}}'
+        content = b'{"name":"ip-address","version":"10.7.6","scripts":{"postinstall":"never-run"}}'
         with tarfile.open(fileobj=output, mode='w:gz') as archive:
             item = tarfile.TarInfo('package/package.json'); item.size = len(content); archive.addfile(item, io.BytesIO(content))
         with tempfile.TemporaryDirectory(prefix='ct-overlay-test-') as directory:

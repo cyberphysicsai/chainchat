@@ -2,6 +2,12 @@
 const fail=()=>Object.assign(new Error('The native model route differs from its admitted owner transport.'),{code:'OPENCLAW_MODEL_ROUTE_HELD',status:422});
 const ids=Object.freeze({openai:'chainchat-openai',compatible:'chainchat-compatible',anthropic:'chainchat-anthropic',gemini:'chainchat-gemini'});
 const name=value=>typeof value==='string'&&value.length>0&&value.length<=512&&!/[\0\r\n\u2028\u2029]/u.test(value);
+export const isRemovedNativeProvider = value => typeof value === 'string' && /^(?:openai-codex|[a-z0-9_-]+-cli)$/iu.test(value);
+export const isRemovedNativeModel = value => typeof value === 'string' && isRemovedNativeProvider(value.split('/')[0]);
+export function isExternalNativeRuntime(value) {
+  const id = typeof value === 'string' ? value : value?.id;
+  return typeof id === 'string' && !['auto', 'default', 'openclaw'].includes(id.toLowerCase());
+}
 export function modelRouteForConfig(config){
   if(config?.provider==='native')return{transport:'native'};
   const provider=ids[config?.provider];if(!provider)throw fail();
@@ -19,7 +25,7 @@ export function runtimeModelIdentity({runtimeSettings,model}={}){
 export function assertModelRoute(route,actual){
   if(!validModelRoute(route)||!actual||Object.keys(actual).sort().join(',')!=='model,provider'||!name(actual.provider)||!name(actual.model)||
     route.transport==='proxy'&&(actual.provider!==route.provider||actual.model!==route.model)||
-    route.transport==='native'&&actual.provider.startsWith('chainchat-'))throw fail();
+    route.transport==='native'&&(actual.provider.startsWith('chainchat-') || isRemovedNativeProvider(actual.provider)))throw fail();
   return true;
 }
 // Hook errors are isolated by upstream. Return an explicit closed route as

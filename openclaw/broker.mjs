@@ -327,6 +327,8 @@ export function createPoIBroker({ engine, review, generateSummary, channelIngres
     event(claim, 'gate', 'started', `PoI scopes and reviews the proposed ${label} tool call`);
     try {
       if (claim.purpose !== 'candidate' || claim.finalized || claim.ended || !claim.prepared) throw failure('The invocation cannot acquire host-tool authority.');
+      const nativeMedia = ['image','pdf','tts','image_generate','video_generate','music_generate'].includes(request.tool?.name);
+      if (nativeMedia) await claim.context.assertNativeMediaKeyRoute?.();
       if (!managed && request.tool?.name === 'browser') {
         const tool = request.tool;
         if (!claim.context.browserInvocation || !claim.toolAuthority.enabled || !claim.toolAuthority.tools.includes('browser') ||
@@ -396,6 +398,7 @@ export function createPoIBroker({ engine, review, generateSummary, channelIngres
       await sameHead();
       // Canonical parameters are exactly those reviewed; the plugin applies
       // these through upstream's parameter reconciliation before execution.
+      if (nativeMedia) await claim.context.assertNativeMediaKeyRoute?.();
       const rechecked = managed ? await managed.recheck() : isGoal ? ownGoalCall(claim, tool) : isService ? serviceCall() : isPlugin ? pluginCall() : isNative ? nativeCall(tool) : await authorizeToolCall(claim.toolAuthority, tool, { protectedRoots: claim.toolProtectedRoots, managedBrowser: !!claim.context.browserInvocation, pluginTools: claim.context.pluginTools || [], nativeTools: claim.context.nativeTools || [] });
       if (JSON.stringify(rechecked) !== JSON.stringify(tool)) throw failure('The tool scope changed during review.', 'HOST_TOOL_SCOPE_CHANGED');
       if (isGoal) {
@@ -588,7 +591,9 @@ export function createPoIBroker({ engine, review, generateSummary, channelIngres
       // This correlation is not a native agent run ID and grants no tool or
       // candidate authority. Only native admission may bind claim.runId.
       try {
-        await authorize(claim);assertModelRoute(modelRouteForConfig(claim.config),request.model);const prepared = await prepare(claim);
+        await authorize(claim);assertModelRoute(modelRouteForConfig(claim.config),request.model);
+        if (claim.context.nativeProvider) await claim.context.assertNativeModel?.(request.model.provider);
+        const prepared = await prepare(claim);
         return { ...response(claim, { context: prepared.context,
           assembly: {version: 1, sessionKey: request.sessionKey, contextSha256: sha(prepared.context), transport: claim.context.nativeProvider === true ? 'native' : 'proxy'} }),
           binding: { sessionKey: request.sessionKey, runId: request.runId } };
@@ -624,7 +629,10 @@ export function createPoIBroker({ engine, review, generateSummary, channelIngres
     if (request.op === 'prepare' || request.op === 'finalize') {
       try {
         if (request.op === 'finalize') return await finalize(claim, request);
-        if(request.model!==undefined)assertModelRoute(modelRouteForConfig(claim.config),request.model);
+        if(request.model!==undefined){
+          assertModelRoute(modelRouteForConfig(claim.config),request.model);
+          if (claim.context.nativeProvider) await claim.context.assertNativeModel?.(request.model.provider);
+        }
         const prepared = await prepare(claim);
         return response(claim, { context: prepared.context, toolsAllow: prepared.toolsAllow });
       } catch (error) {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import {createRuntimeHealthDisplay} from '../public/runtime-health.js';
+import {providerConnectionView} from '../public/chainchat-display.js';
 
 const app = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const apiSource = app.slice(app.indexOf('async function api('), app.indexOf('function toast('));
@@ -31,7 +32,7 @@ function fixture() {
     cognition: () => ({mode: 'active'}), nativePanel: {syncConnection(value) {toolContext = value;}},
     clearLocalSession() {throw new Error('Unexpected session clearing');},
     DEFAULT_SETTINGS: {continuum: {}}, DEFAULT_COGNITION: {}, agentId: () => 'fixture-agent',
-    normalizeCognition: value => value, renderState() {},
+    normalizeCognition: value => value, providerConnectionView, renderState() {},
   });
   vm.runInContext(apiSource + '\n' + stateSource + '\nglobalThis.call = api; globalThis.apply = applyState; globalThis.snapshot = () => state;', context);
   return {call: context.call, apply: context.apply, snapshot: context.snapshot, node,

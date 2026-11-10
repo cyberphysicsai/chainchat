@@ -8,7 +8,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {assertRuntimeCompatibility} from './runtime-compatibility.mjs';
 
 const execute = promisify(execFile), tickets = new WeakMap();
-const PIN = '2026.10.10', MAX_FILES = 20000, MAX_BYTES = 2 * 1024 ** 3;
+const PIN = '2026.11.2', MAX_FILES = 20000, MAX_BYTES = 2 * 1024 ** 3;
 const error = (code = 'MIGRATION_REQUIRED') => Object.assign(new Error(code === 'MIGRATION_FAILED'
   ? 'The offline native upgrade did not complete. Its private pre-upgrade backup was retained; inspect recovery before retrying.'
   : 'The native state needs a supported offline migration or local inspection before startup.'), {code,status:503});

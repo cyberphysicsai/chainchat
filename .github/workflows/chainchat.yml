@@ -20,7 +20,7 @@ jobs:
           node-version: '26.13.0'
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.15.2'
       - name: Verify the packaged skill against the pinned official Git tree
         shell: bash
         run: |
@@ -39,7 +39,7 @@ jobs:
           python installer/security_overlays.py --application . --cache "$RUNNER_TEMP/chainchat-security-overlays"
           python installer/runtime_compatibility.py --application .
           python installer/check_upstream.py > "$RUNNER_TEMP/chainchat-upstream-check.json"
-          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert len(overlays)==1 and overlays[0]["id"]=="early-hook-input-provenance-v2" and len(overlays[0]["files"])==2'
+          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert [(row["id"],len(row["files"])) for row in overlays]==[("early-hook-input-provenance-v2",2),("api-key-channel-auth-v1",3)]'
           node openclaw/launcher.mjs --check
           echo "CT_OPENCLAW_PACKAGE=$GITHUB_WORKSPACE/openclaw/runtime/node_modules/openclaw" >> "$GITHUB_ENV"
           echo "CT_OPENCLAW_NODE=$(node -p process.execPath)" >> "$GITHUB_ENV"
@@ -109,7 +109,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.15.2'
       - name: Build sanitized application and installer
         shell: pwsh
         run: |
@@ -155,7 +155,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.15.2'
       - name: Check archive and runtime guards on the native platform
         run: python3 -m unittest discover -s test -p test_posix_installer.py
       - name: Build exact source and execute per-user setup

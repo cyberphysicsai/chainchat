@@ -33,7 +33,7 @@ class RuntimeCompatibilityTests(unittest.TestCase):
             root, records, descriptor = self.fixture(directory)
             # A prior interrupted run may have published only one exact file.
             (root / records[0][0]).write_text(records[0][4], newline='')
-            with patch.object(overlay, 'PATCHES', records), patch.object(overlay, 'DESCRIPTOR', descriptor):
+            with patch.object(overlay, 'PATCHES', records), patch.object(overlay, 'DESCRIPTORS', [descriptor]):
                 self.assertEqual(overlay.apply_package(root, [descriptor]), [descriptor])
                 first = [(root / record[0]).read_bytes() for record in records]
                 overlay.apply_package(root, [descriptor])
@@ -45,7 +45,7 @@ class RuntimeCompatibilityTests(unittest.TestCase):
             root, records, descriptor = self.fixture(directory)
             (root / records[1][0]).write_text('unknown upstream bytes')
             first = (root / records[0][0]).read_bytes()
-            with patch.object(overlay, 'PATCHES', records), patch.object(overlay, 'DESCRIPTOR', descriptor):
+            with patch.object(overlay, 'PATCHES', records), patch.object(overlay, 'DESCRIPTORS', [descriptor]):
                 with self.assertRaisesRegex(ValueError, 'upstream source differs'):
                     overlay.apply_package(root, [descriptor])
             self.assertEqual((root / records[0][0]).read_bytes(), first)
@@ -53,7 +53,7 @@ class RuntimeCompatibilityTests(unittest.TestCase):
     def test_unknown_manifest_and_release_are_denied(self):
         with tempfile.TemporaryDirectory(prefix='ct-compat-') as directory:
             root, records, descriptor = self.fixture(directory)
-            with patch.object(overlay, 'PATCHES', records), patch.object(overlay, 'DESCRIPTOR', descriptor):
+            with patch.object(overlay, 'PATCHES', records), patch.object(overlay, 'DESCRIPTORS', [descriptor]):
                 for commitment in [[], [dict(descriptor, id='unreviewed')],
                                    [dict(descriptor, id='early-hook-input-provenance-v1')],
                                    [dict(descriptor, upstreamVersion='latest')]]:
@@ -69,14 +69,14 @@ class RuntimeCompatibilityTests(unittest.TestCase):
             target = root / records[0][0]
             alias = root / 'shared.mjs'
             os.link(target, alias)
-            with patch.object(overlay, 'PATCHES', records), patch.object(overlay, 'DESCRIPTOR', descriptor):
+            with patch.object(overlay, 'PATCHES', records), patch.object(overlay, 'DESCRIPTORS', [descriptor]):
                 with self.assertRaisesRegex(ValueError, 'regular owned'):
                     overlay.apply_package(root, [descriptor])
             self.assertEqual(target.read_bytes(), records[0][3].encode())
             self.assertEqual(alias.read_bytes(), records[0][3].encode())
 
     @unittest.skipUnless(os.environ.get('CT_OPENCLAW_PACKAGE'), 'requires the exact reviewed SDK package')
-    def test_actual_reviewed_source_diff_is_only_the_two_typed_metadata_values_per_context(self):
+    def test_actual_reviewed_source_diffs_are_exact_and_metadata_changes_only_two_fields(self):
         source = Path(os.environ['CT_OPENCLAW_PACKAGE']).resolve()
         with tempfile.TemporaryDirectory(prefix='ct-compat-real-') as directory:
             root = Path(directory).resolve()
@@ -89,16 +89,17 @@ class RuntimeCompatibilityTests(unittest.TestCase):
                 original = data.replace(replacement.encode(), anchor.encode()) if digest == after else data
                 self.assertEqual(hashlib.sha256(original).hexdigest(), before)
                 (root / name).write_bytes(original)
-            overlay.apply_package(root, [overlay.DESCRIPTOR])
-            overlay.apply_package(root, [overlay.DESCRIPTOR])
+            overlay.apply_package(root, overlay.DESCRIPTORS)
+            overlay.apply_package(root, overlay.DESCRIPTORS)
             for name, before, after, anchor, replacement in overlay.PATCHES:
                 data = (root / name).read_bytes()
                 self.assertEqual(hashlib.sha256(data).hexdigest(), after)
                 self.assertEqual(data.count(replacement.encode()), 1)
                 self.assertEqual(hashlib.sha256(data.replace(replacement.encode(), anchor.encode())).hexdigest(), before)
                 added = [line.strip() for line in replacement.splitlines() if line not in anchor.splitlines()]
-                self.assertEqual(added, ['inputProvenance: params.inputProvenance,',
-                                         'currentSourceTurnId: params.currentSourceTurnId,'])
+                if name in {row[0] for row in overlay.METADATA_PATCHES}:
+                    self.assertEqual(added, ['inputProvenance: params.inputProvenance,',
+                                             'currentSourceTurnId: params.currentSourceTurnId,'])
 
     @unittest.skipUnless(os.environ.get('CT_OPENCLAW_PACKAGE'), 'requires the exact reviewed SDK package')
     def test_actual_old_v1_bytes_are_not_silently_accepted_or_upgraded(self):
@@ -118,7 +119,7 @@ class RuntimeCompatibilityTests(unittest.TestCase):
             first = root / overlay.PATCHES[0][0]
             original_first = first.read_bytes()
             with self.assertRaisesRegex(ValueError, 'upstream source differs'):
-                overlay.apply_package(root, [overlay.DESCRIPTOR])
+                overlay.apply_package(root, overlay.DESCRIPTORS)
             self.assertEqual(first.read_bytes(), original_first)
 
 

@@ -15,6 +15,8 @@ test('the model picker only lists and switches models from the saved personal co
   };
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /data-model-tier|Free models|free-tier/);
+  assert.doesNotMatch(html, /ChatGPT|Claude Code|subscription/i);
+  assert.match(html, /Connect a model API/);
   const context = { $, modelCatalogueView, modelSwitchBusy: false, modelCatalogueLoading: false, modelCatalogueError: '', requestBusy: false,
     state: { provider: { configured: false } }, lastByokDetails: null, nativeModelPicker: null, nativeAuthControls: null, nativeMediaComposer: null,
     modelCatalogue: { active: { tier: 'free', model: 'old-shared-model' }, tiers: [

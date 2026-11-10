@@ -20,6 +20,7 @@ import {
   validateNativeProvider,
   assertCredentialIsolation,
   isRetiredProviderCredential,
+  isUnsupportedModelCredential,
   validUsedRings,
   perspectiveTokenAllowance,
   answerTokenAllowance,
@@ -32,6 +33,7 @@ import { Activity, CAPABILITIES, cognitionFor, validateCognition } from "./lib/c
 import { enrichPrepared, searchPerspectives } from "./lib/native-cognition.mjs";
 import { createPoIBroker } from "./openclaw/broker.mjs";
 import { createOpenClawGateway } from "./openclaw/gateway.mjs";
+import { isRemovedNativeModel, isRemovedNativeProvider } from './openclaw/plugin/model-route.mjs';
 import { discoverTimechains } from "./openclaw/discovery.mjs";
 import { ToolPermissions, disabledToolAuthority } from "./lib/tool-permissions.mjs";
 import { createAgentSkills } from "./lib/agent-skills.mjs";
@@ -679,7 +681,7 @@ export async function createApp(options = {}) {
   }, 60_000);
   expiry.unref();
   const connectedProvider = config => {
-    if (config?.tier === 'native' && config.provider === 'native') return config;
+    if (config?.tier === 'native' && config.provider === 'native') return isRemovedNativeModel(config.model) ? null : config;
     return config?.tier === 'byok' && !isRetiredProviderCredential(config.apiKey) ? config : null;
   };
   const cleanProvider = config => {
@@ -2341,9 +2343,10 @@ export async function createApp(options = {}) {
           }
           if (url.pathname === '/api/openclaw/auth') {
             await requireLocalAccess();
-            const allowed = ['action', 'provider', 'apiKey', 'authChoice', 'sessionId', 'answer', 'profileIds'];
-            if (Object.keys(input).some(key => !allowed.includes(key)) || typeof input.action !== 'string' || !openclaw?.nativeAuth)
-              throw err('Choose a supported native provider sign-in action.', 'OPENCLAW_NATIVE_AUTH_INVALID', 400);
+            const allowed = ['action', 'provider', 'apiKey', 'profileIds'];
+            if (Object.keys(input).some(key => !allowed.includes(key)) || !['key', 'logout'].includes(input.action) ||
+                isRemovedNativeProvider(input.provider) || isUnsupportedModelCredential(input.apiKey) || !openclaw?.nativeAuth)
+              throw err('Use the native provider API-key controls.', 'OPENCLAW_NATIVE_AUTH_INVALID', 400);
             if (typeof input.apiKey === 'string' && input.apiKey.length >= 8) serviceSecrets.add(input.apiKey);
             const result = await openclaw.nativeAuth({...input, identity: await nativeControlIdentity(session)});
             assertServiceIsolation(result);
@@ -2366,7 +2369,7 @@ export async function createApp(options = {}) {
             assertServiceIsolation(result); return send(200, result);
           }
           if (url.pathname === '/api/openclaw/provider') {
-            if (Object.keys(input).some(key => key !== 'model') || typeof input.model !== 'string')
+            if (Object.keys(input).some(key => key !== 'model') || typeof input.model !== 'string' || isRemovedNativeModel(input.model))
               throw err('Select a model from the actual native OpenClaw catalogue.');
             await requireLocalAccess();
             if (!openclaw?.nativeModels || !openclaw?.setNativeModel || !openclaw?.generateNative || !openclaw?.completeNative)

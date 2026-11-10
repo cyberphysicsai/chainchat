@@ -43,7 +43,7 @@ export function createNativeCompletion({ complete, assertPolicy = () => {} } = {
     let result;
     try {
       result = await complete({ systemPrompt: request.system, messages: request.messages,
-        maxTokens: request.maxTokens, purpose: `cypher-tempre-poi.${request.purpose}`, agentId: 'main', signal });
+        maxTokens: request.maxTokens, purpose: `cypher-tempre-poi.${request.purpose}`, agentId: 'main', requiredAuthMode: 'api-key', signal });
     } catch (error) { throw completionError(error, signal); }
     if (signal?.aborted) throw fail('CANCELLED'); assertCurrent();
     if (!plain(result) || result.agentId !== 'main' || result.execution?.mode !== 'direct-provider') throw fail('PROVIDER_INVALID_RESPONSE');

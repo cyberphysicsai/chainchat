@@ -6,7 +6,8 @@ metadata-only overlay forwards existing `params.inputProvenance` and
 `params.currentSourceTurnId` into the same two early hook contexts in the
 extracted runtime. The original npm archive/SRI remains
 unchanged; the installed files have separately committed original and final
-SHA-256 values. Its MIT license and dependency notices remain in the installed
+SHA-256 values. A separate API-key policy overlay holds built-in channel
+provider login and suppresses native auth-status usage probing. The MIT license and dependency notices remain in the installed
 package. The canonical Timechain engine has its own
 independent source commitment and compatibility tests.
 
@@ -22,14 +23,16 @@ doctor checks the final installed copies. Keep the published npm lock evidence
 intact and report these installed replacements separately from its raw audit.
 The Windows, macOS and Linux Node/CPython versions and archive SHA-256 values are pinned
 in the same file. Setup refuses a different upstream version or damaged archive.
+Windows uses the official embeddable CPython 3.15.2 archive. macOS and Linux
+use Astral's CPython 3.15.2 standalone builds from its 20261026 release.
 
-`runtimeCompatibilityOverlays` records `early-hook-input-provenance-v2` for
-OpenClaw 2026.10.10. `installer/runtime_compatibility.py --application .` applies
-the exact two-file metadata overlay after package installation, without executing
-source or scripts. It validates every input before publishing replacements and
-accepts only exact original or exact v2-patched bytes; earlier overlay output is
-refused. Launcher doctor and
-Gateway both require the final hashes before startup. This preserves typed
+`runtimeCompatibilityOverlays` records two exact groups for OpenClaw 2026.11.2.
+`early-hook-input-provenance-v2` covers two early hook files.
+`api-key-channel-auth-v1` covers the shared raw `/login` dispatch, built-in
+command registry and native auth-status handler. The installer validates all
+five inputs before publishing any replacement and accepts exact original or
+exact reviewed output bytes. Launcher doctor and Gateway require all five
+final hashes before startup. The metadata overlay preserves typed
 asynchronous task provenance and original client-nonce correlation at mandatory
 early admission; message text or transport acknowledgment grants no authority.
 On each upstream update, inspect the public hook contract and remove the overlay

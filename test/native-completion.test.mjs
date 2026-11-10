@@ -11,7 +11,8 @@ test('native utility delegates exact default SDK selection without tools or call
   const calls = [];
   const run = createNativeCompletion({ complete: async value => { calls.push(value); return good(); } });
   const result = await run(request());
-  assert.deepEqual(Object.keys(calls[0]).sort(), ['agentId', 'maxTokens', 'messages', 'purpose', 'signal', 'systemPrompt']);
+  assert.deepEqual(Object.keys(calls[0]).sort(), ['agentId', 'maxTokens', 'messages', 'purpose', 'requiredAuthMode', 'signal', 'systemPrompt']);
+  assert.equal(calls[0].requiredAuthMode, 'api-key');
   assert.equal(calls[0].purpose, 'cypher-tempre-poi.review');
   assert.equal(calls[0].systemPrompt, request().system);
   assert.equal('tools' in calls[0], false); assert.equal(calls[0].agentId, 'main');

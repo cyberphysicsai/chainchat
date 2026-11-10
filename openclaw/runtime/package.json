@@ -3,12 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "dependencies": {
-    "openclaw": "2026.10.10"
+    "openclaw": "2026.11.2"
   },
   "overrides": {
-    "undici": "8.12.3",
+    "undici": "8.12.4",
     "zod": "4.6.7",
-    "npm": "12.2.1",
-    "minimatch": "11.0.4"
+    "npm": "12.2.2",
+    "minimatch": "11.0.5"
   }
 }

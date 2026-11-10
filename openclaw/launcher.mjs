@@ -41,13 +41,18 @@ async function doctor() {
       throw new Error('The installed dependencies do not match the reviewed security overlay.');
     dependencies[name] = dependency.version;
   }
-  const bundledDependencies={};
-  for(const overlay of lock.bundledDependencyOverlays||[]) {
-    const reviewed={undici:['6.29.1','29c4b8e0b2d86cb8795571c1959012ce057a14ecfd34858335f47c31e770a04f'],'ip-address':['10.7.6','d593a65a5ffa85e704ffd4b2c7220d2c5c3ff879264416f694b2a15d124be7ca']}[overlay.name];
-    if(!reviewed||overlay.version!==reviewed[0]||overlay.target!=='node_modules/npm/node_modules/'+overlay.name||overlay.sha256!==reviewed[1])throw new Error('The reviewed bundled security overlay is invalid.');
-    const actual=JSON.parse(await fs.readFile(path.join(packageRoot,'..','npm','node_modules',overlay.name,'package.json'),'utf8'));
-    if(actual.name!==overlay.name||actual.version!==overlay.version)throw new Error('The npm bundled security package is not patched; run the reviewed installer.');
-    bundledDependencies['npm/'+overlay.name]=actual.version;
+  const overlays = lock.bundledDependencyOverlays;
+  const overlay = overlays?.[0];
+  if (!Array.isArray(overlays) || overlays.length !== 1 || overlay?.name !== 'ip-address' ||
+      overlay.target !== 'node_modules/npm/node_modules/ip-address' || overlay.version !== '10.7.6' ||
+      overlay.sha256 !== 'd593a65a5ffa85e704ffd4b2c7220d2c5c3ff879264416f694b2a15d124be7ca')
+    throw new Error('The reviewed bundled security overlay is invalid.');
+  const bundledDependencies = {};
+  for (const [name, version] of [['ip-address', overlay.version], ['undici', '6.29.1']]) {
+    const actual = JSON.parse(await fs.readFile(path.join(packageRoot, '..', 'npm', 'node_modules', name, 'package.json'), 'utf8'));
+    if (actual.name !== name || actual.version !== version)
+      throw new Error('The npm bundled security package does not match the reviewed pin; run the reviewed installer.');
+    bundledDependencies['npm/' + name] = actual.version;
   }
   await fs.access(path.join(packageRoot, 'openclaw.mjs'));
   const runtimeCompatibilityOverlays=await assertRuntimeCompatibility(packageRoot);

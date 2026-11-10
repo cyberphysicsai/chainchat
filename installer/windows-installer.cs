@@ -459,7 +459,7 @@ namespace CypherTempreInstaller {
         if(!Directory.Exists(release)) {
           string stage=release+".stage-"+Guid.NewGuid().ToString("N"); Log("Staging ChainChat " + manifest.version); Extract(payload,stage,manifest.payloadPrefix);
           Extract(pythonZip,Path.Combine(stage,".runtime","python"),manifest.python.prefix);
-          File.WriteAllText(Path.Combine(stage,".runtime","python","python312._pth"),"python312.zip\n.\n"+release+"\n"+Path.Combine(release,"engine","proof-of-interaction")+"\nimport site\n",new UTF8Encoding(false));
+          File.WriteAllText(Path.Combine(stage,".runtime","python","python315._pth"),"python315.zip\n.\n"+release+"\n"+Path.Combine(release,"engine","proof-of-interaction")+"\nimport site\n",new UTF8Encoding(false));
           Directory.CreateDirectory(Path.GetDirectoryName(release)); Directory.Move(stage,release);
         }
         VerifyArchiveFiles(payload,release,manifest.payloadPrefix,null);
@@ -472,9 +472,9 @@ namespace CypherTempreInstaller {
           Log("Applying exact native hook metadata compatibility overlay"); Run(active.python,new [] {Path.Combine(release,"installer","runtime_compatibility.py"),"--application",release},release,environment,60);
           AtomicJson(Path.Combine(release,"installed.json"),new {product=Product,payloadSha256=manifest.payloadSha256,openclawVersion=manifest.openclawVersion});
         }
-        VerifyArchiveFiles(pythonZip,Path.Combine(release,".runtime","python"),manifest.python.prefix,new HashSet<string>{"python312._pth"});
-        string expectedPythonPath="python312.zip\n.\n"+release+"\n"+Path.Combine(release,"engine","proof-of-interaction")+"\nimport site\n";
-        if(File.ReadAllText(Path.Combine(release,".runtime","python","python312._pth")) != expectedPythonPath) throw new InvalidOperationException("The embedded Python import path changed; reinstall the reviewed release.");
+        VerifyArchiveFiles(pythonZip,Path.Combine(release,".runtime","python"),manifest.python.prefix,new HashSet<string>{"python315._pth"});
+        string expectedPythonPath="python315.zip\n.\n"+release+"\n"+Path.Combine(release,"engine","proof-of-interaction")+"\nimport site\n";
+        if(File.ReadAllText(Path.Combine(release,".runtime","python","python315._pth")) != expectedPythonPath) throw new InvalidOperationException("The embedded Python import path changed; reinstall the reviewed release.");
         string packageFile=Path.Combine(release,"openclaw","runtime","node_modules","openclaw","package.json");
         Dictionary<string,object> package=Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(packageFile));
         if(Convert.ToString(package["version"]) != manifest.openclawVersion) throw new InvalidOperationException("Installed OpenClaw version differs from its pinned release.");
