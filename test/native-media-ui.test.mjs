@@ -131,11 +131,11 @@ test('the actual chat submit handler sends uploaded IDs only on native chat and 
   const app = await readFile(new URL('../public/app.js',import.meta.url),'utf8');
   const start = app.indexOf('function clearComposerDraft()'), end = app.indexOf('$("messageInput").addEventListener("keydown"',start);
   assert.ok(start>=0 && end>start);
-  async function run(provider, uploading=false) {
+  async function run(provider, uploading=false, emergencyHaltBlocksWork=false) {
     const nodes=new Map(), $=id=>{if(!nodes.has(id))nodes.set(id,new Node('div'));return nodes.get(id);};
     $('messageInput').value='Inspect the selected file.'; $('messageInput').dispatchEvent=()=>{};
     const calls=[],messages=[],notices=[];let takes=0;
-    const context={ $, requestBusy:false, modelSwitchBusy:false, stoppingBusy:false, token:'synthetic-local-session',state:{agent:{id:'fixture-agent'},provider},
+    const context={ $, requestBusy:false, modelSwitchBusy:false, stoppingBusy:false, emergencyHaltBlocksWork, token:'synthetic-local-session',state:{agent:{id:'fixture-agent'},provider},
       nativeMediaComposer:{snapshot:()=>({uploading}),sync(){},take(){takes++;return{ids:[id],assets:[asset()]};}},
       composerCommand,nativeChatPayload,cognition:()=>({mode:'active'}),agentId:()=> 'fixture-agent',AbortController,Event,
       addMessage:value=>messages.push(value),activity(){},toast:value=>notices.push(value),openModel(){},openDialog(){},
@@ -150,4 +150,5 @@ test('the actual chat submit handler sends uploaded IDs only on native chat and 
   assert.equal(accepted.messages[0].attachments[0].id,id);
   const direct=await run({provider:'compatible',tier:'byok',configured:true});assert.equal(direct.calls.length,0);assert.match(direct.notices[0],/native OpenClaw/);
   const pending=await run(native(),true);assert.equal(pending.calls.length,0);assert.equal(pending.takes,0);
+  const halted=await run(native(),false,true);assert.equal(halted.calls.length,0);assert.equal(halted.takes,0);
 });
