@@ -1975,7 +1975,10 @@ export async function createApp(options = {}) {
     for (const timer of idleJobs.values()) clearTimeout(timer);
     idleJobs.clear();
     for (const release of [...nativeTaskReleases]) release();
-    for (const session of sessions.values()) abortSession(session);
+    for (const session of sessions.values()) {
+      abortSession(session);
+      session.sessionEquipment.clear();
+    }
     nativeOwners.clear();
     nativeCatalogues.clear();
     automationOwners.clear();
@@ -2335,7 +2338,7 @@ export async function createApp(options = {}) {
           }
           if (req.method !== "POST") throw err("Not found.", "NOT_FOUND", 404);
           if (['/api/timechain/backup', '/api/timechain/restore'].includes(url.pathname)) {
-            if (session.origin !== `http://${req.headers.host}`)
+            if (!session.localOwner || !localBrowser)
               throw err('Use the installed ChainChat app to back up or restore a Timechain.', 'BACKUP_LOCAL_REQUIRED', 403);
             await requireLocalAccess();
             const exporting = url.pathname.endsWith('/backup');
@@ -2362,6 +2365,8 @@ export async function createApp(options = {}) {
                     throw err('Commit the pending conversation block before creating a backup.', 'BACKUP_PENDING_BLOCK', 409);
                   return await timechainBackups.export({ root: record.root, passphrase: input.passphrase, signal: controller.signal, authorize,
                     send: async (file, size) => {
+                      await authorize();
+                      emergency.assertAvailable(workEpoch);
                       res.writeHead(200, { 'Content-Type': 'application/octet-stream',
                         'Content-Disposition': 'attachment; filename="chainchat-timechain.ctbackup"', 'Content-Length': size });
                       await pipeline(createReadStream(file), res, { signal: controller.signal });
