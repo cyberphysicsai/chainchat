@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { createApp } from '../server.mjs';
 import { StateStore } from '../lib/state.mjs';
 import { createTimechainBackups } from '../lib/timechain-backup.mjs';
+import { engine as nativeEngine } from '../lib/engine.mjs';
 
 const passphrase = 'A separate backup passphrase 🌱';
 const hosted = 'https://cyphertempre.ai';
@@ -26,7 +27,12 @@ function upload(file, secret = passphrase) {
 test('local backup authenticates a native Timechain, then restores a separate verified copy', { timeout: 120_000 }, async t => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ct-backup-test-'));
   const data = path.join(temp, 'data');
-  const app = await createApp({ dataDir: data, pairingCode: 'TIMECHAINBACKUP', publicOrigins: [hosted], generate: never, review: never });
+  let beforeVerification;
+  const engine = async (request, options) => {
+    if (request.op === 'inspect' && request.root.includes('.timechain-backup-')) await beforeVerification?.();
+    return nativeEngine(request, options);
+  };
+  const app = await createApp({ dataDir: data, pairingCode: 'TIMECHAINBACKUP', publicOrigins: [hosted], engine, generate: never, review: never });
   app.server.listen(0, '127.0.0.1');
   await once(app.server, 'listening');
   const origin = `http://127.0.0.1:${app.server.address().port}`;
@@ -123,6 +129,22 @@ test('local backup authenticates a native Timechain, then restores a separate ve
   const selected = await json('/api/agents/select', { id: restored.id }, 200, owner);
   assert.equal(selected.agent.consensus, true);
   assert.equal(selected.agent.verified, true);
+
+  let enteredVerification, resumeVerification;
+  const entered = new Promise(resolve => { enteredVerification = resolve; });
+  const resume = new Promise(resolve => { resumeVerification = resolve; });
+  beforeVerification = () => { enteredVerification(); return resume; };
+  const restoring = request('/api/timechain/restore', upload(archive), owner);
+  try {
+    await Promise.race([entered, restoring.then(() => { throw new Error('Restore returned before native verification'); })]);
+    await json('/api/unpair', {}, 200, owner);
+  } finally {
+    resumeVerification();
+  }
+  const cancelled = await restoring;
+  assert.equal(cancelled.status, 401);
+  assert.equal(app.store.agents.length, 2);
+  assert.equal((await fs.readdir(data)).some(name => name.startsWith('.timechain-backup-')), false);
 });
 
 test('restart clears its abandoned staging directory without following links or touching unrelated data', async t => {

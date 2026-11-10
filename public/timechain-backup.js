@@ -29,7 +29,8 @@ export function mountTimechainBackups({ document, local, openDialog, requirePair
     byId('timechainBackupAgent').textContent = selectedAgent
       ? `Backing up ${selectedAgent.name}.`
       : 'Create or pair a Timechain before making a backup.';
-    submitButtons[0].disabled = !selectedAgent;
+    submitButtons[0].disabled = !!operation || !selectedAgent;
+    submitButtons[1].disabled = !!operation;
     openDialog('timechainBackupDialog');
   }
   byId('openTimechainBackup').addEventListener('click', () => local ? requirePair(open) : open());
