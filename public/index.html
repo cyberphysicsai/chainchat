@@ -110,7 +110,7 @@
         <span class="status-dot" id="bridgeDot"></span
         ><span id="bridgeStatus">LOCAL-FIRST WORKSPACE</span
         ><span class="top-divider"></span
-        ><span class="mono" id="appVersion">v1.0.3</span>
+        ><span class="mono" id="appVersion">v1.0.4</span>
       </div>
       <div class="top-actions">
         <button class="quiet-button setup-guide-button" id="setupGuideButton" type="button">Setup guide</button>
@@ -412,6 +412,7 @@
 
     <section id="openclawPanel" class="native-workspace agent-card-section" aria-labelledby="nativeTitle">
       <div class="native-heading"><div><span class="eyebrow">02 / OPENCLAW CONTROL CENTER</span><h2 id="nativeTitle" tabindex="-1">Your runtime. In reach.</h2><p>Configure native OpenClaw below your Cypher Tempre chat.</p></div><button class="secondary-button" id="closeOpenclawPanel" type="button">Back to chat ↑</button></div>
+      <p class="native-boundary-note">Some features originate with OpenClaw for those who expect that and associate it those features with agents, copyright 2026 OpenClaw Foundation</p>
       <div class="native-connection"><p id="nativeConnection" role="status">Open your installed ChainChat app to load authenticated native controls.</p><button id="connectNativeControls" class="secondary-button" type="button">Connect local app</button></div>
       <p class="native-boundary-note">Local authentication, private credentials, required PoI enforcement and explicit tool grants remain operator-protected. Every native configuration family is discoverable in Settings; managed paths explain their restrictions.</p>
       <div class="native-tabs" role="tablist" aria-label="OpenClaw settings sections">
@@ -561,13 +562,13 @@
       <div class="beta-actions">
         <a
           class="quiet-button"
-          href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.3/CypherTempre-ChainChat-Setup-1.0.3-windows-x64.exe"
+          href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.4/CypherTempre-ChainChat-Setup-1.0.4-windows-x64.exe"
           target="_blank"
           rel="noopener noreferrer"
           >Install ChainChat for Windows</a
         >
-        <a class="quiet-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.3/CypherTempre-ChainChat-Setup-1.0.3-macos.zip" rel="noopener noreferrer">Install for macOS</a>
-        <a class="quiet-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.3/CypherTempre-ChainChat-Setup-1.0.3-linux.tar.gz" rel="noopener noreferrer">Install for Linux</a>
+        <a class="quiet-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.4/CypherTempre-ChainChat-Setup-1.0.4-macos.zip" rel="noopener noreferrer">Install for macOS</a>
+        <a class="quiet-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.4/CypherTempre-ChainChat-Setup-1.0.4-linux.tar.gz" rel="noopener noreferrer">Install for Linux</a>
         <a class="quiet-button" href="#chain-auditor">Open chain auditor</a>
       </div>
     </section>
@@ -692,9 +693,9 @@
         <li>Create a genesis or select an existing Timechain. Your equipped faculties and skill bar work there.</li>
       </ol>
       <div class="platform-downloads">
-        <a class="primary-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.3/CypherTempre-ChainChat-Setup-1.0.3-windows-x64.exe" rel="noopener noreferrer">Windows ↗<small>x64 · Setup.exe</small></a>
-        <a class="primary-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.3/CypherTempre-ChainChat-Setup-1.0.3-macos.zip" rel="noopener noreferrer">macOS ↗<small>Apple silicon + Intel · macOS 13.5+</small></a>
-        <a class="primary-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.3/CypherTempre-ChainChat-Setup-1.0.3-linux.tar.gz" rel="noopener noreferrer">Linux ↗<small>x64 + ARM64 · glibc 2.28+</small></a>
+        <a class="primary-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.4/CypherTempre-ChainChat-Setup-1.0.4-windows-x64.exe" rel="noopener noreferrer">Windows ↗<small>x64 · Setup.exe</small></a>
+        <a class="primary-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.4/CypherTempre-ChainChat-Setup-1.0.4-macos.zip" rel="noopener noreferrer">macOS ↗<small>Apple silicon + Intel · macOS 13.5+</small></a>
+        <a class="primary-button" href="https://github.com/cyberphysicsai/chainchat/releases/download/v1.0.4/CypherTempre-ChainChat-Setup-1.0.4-linux.tar.gz" rel="noopener noreferrer">Linux ↗<small>x64 + ARM64 · glibc 2.28+</small></a>
       </div>
       <p class="fine-print">Already installed? Open <strong>ChainChat</strong> from your application launcher. It opens the authenticated local chat. Your API key stays in the running app's memory.</p>
       <p class="fine-print">The website is also available as an optional remote-facing interface to your local app. That advanced mode uses a connection code; the installed chat does not.</p>
@@ -1349,6 +1350,7 @@
         <label class="toggle-row"><span>Route before generation<small>Requires Recall equipped. Check verified memory for replay or useful partial context.</small></span><input id="autoRoute" type="checkbox" role="switch" checked /></label>
         <label class="toggle-row"><span>Semantic recall selection<small>Requires Recall equipped. Let the model select relevant evidence beyond lexical retrieval.</small></span><input id="semanticRecall" type="checkbox" role="switch" checked /></label>
         <label class="toggle-row"><span>Automatic sprouting<small>Allow new safe faculties to grow. New faculties are shown for your equipment choice.</small></span><input id="autoSprout" type="checkbox" role="switch" checked /></label>
+        <label class="toggle-row"><span>Equip newly promoted faculties for this session<small>New Cambium modalities and senses can join your next chat turn once the Timechain verifies them. This never saves them to your loadout.</small></span><input id="sessionAutoEquip" type="checkbox" role="switch" /></label>
         <label class="toggle-row"><span>Consolidate when due<small>Run native Dream consolidation while idle after every 100 new blocks, while learning is enabled. Off by default.</small></span><input id="autoDream" type="checkbox" role="switch" /></label>
         <label class="field">Maximum response revisions<input id="revisionLimit" type="number" min="0" max="3" value="1" /></label>
         <button class="primary-button" type="submit">Apply cognition settings</button>

@@ -1,11 +1,13 @@
 # macOS and Linux setup
 
-The macOS ZIP contains executable **Install ChainChat.command**. Extract it and
-double-click that file. The Linux tar.gz contains executable **Install
+Extract the macOS ZIP and open **Install ChainChat.app** when the release
+provides a signed and notarized installer. Source builds provide
+**Install ChainChat.command**. The Linux tar.gz contains executable **Install
 ChainChat.sh**; extract it and use the file manager's **Run as Program** action.
 A direct `.run` is also supplied for shell-oriented Linux installations. Desktop
 policies differ: a downloaded script may require the normal execute/launch
-confirmation. These packages are unsigned and macOS notarization is not claimed.
+confirmation. Release manifests state whether publisher signing and notarization
+were verified. See [publisher signing](PUBLISHER-SIGNING.md).
 Setup never removes quarantine flags or bypasses Gatekeeper.
 
 Setup displays six numbered stages, from preparation and verified downloads to

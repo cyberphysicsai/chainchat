@@ -966,7 +966,7 @@ def op_commit(request):
             growth = [{"action": result.get("action"), "grew": bool(result.get("grew")),
                        "reason": result.get("reason"),
                        "faculty": {k: result["faculty"][k] for k in
-                                   ("id", "eid", "name", "kind", "function", "category", "status")
+                                   ("id", "eid", "name", "kind", "function", "category", "status", "promoted_to_id")
                                    if isinstance(result.get("faculty"), dict) and k in result["faculty"]}}
                       for result in raw_growth]
         except Exception as exc:

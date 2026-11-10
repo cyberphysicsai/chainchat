@@ -483,7 +483,7 @@ export async function createApp(options = {}) {
       if (config.provider === 'native' && purpose === 'candidate' && scope.nativeAttachments?.length)
         safeArgs.attachments = structuredClone(scope.nativeAttachments);
       return generateNative(config, safeArgs, {
-        purpose, root: record.root, input, loadout: keys(record.loadout), settings: record.settings,
+        purpose, root: record.root, input, loadout: activeLoadoutKeys(record), settings: record.settings,
         learning: cognitionFor(record).learning, memoryPaused: scope.memoryPaused === true, signal: args.signal,
         nativeIdentity: identity, toolAuthority: purpose === "candidate" && !scope.scratchCandidates && !scope.memoryPaused ? tools.grant : disabledToolAuthority(),
         additionalSkills: purpose === 'candidate' ? scope.agentSkillSnapshot?.skills : undefined,
@@ -644,6 +644,7 @@ export async function createApp(options = {}) {
       provider: null,
       byokProvider: null,
       controllers: new Set(),
+      sessionEquipment: new Map(),
       agentId: store.selectedAgentId,
     };
     authority.attach(paired);
@@ -926,7 +927,7 @@ export async function createApp(options = {}) {
         if (plugins.length && JSON.stringify(await trustedPlugins.toolCatalogue({identity})) !== JSON.stringify(plugins))
           throw err('The trusted native plugin surface changed.', 'PLUGIN_TRUST_CHANGED', 409);
       });
-      const context = {purpose: 'candidate', root: record.root, input: scope.originalInput, loadout: keys(record.loadout), settings: record.settings,
+      const context = {purpose: 'candidate', root: record.root, input: scope.originalInput, loadout: activeLoadoutKeys(record), settings: record.settings,
         autonomousCommit: true,
         ...(kind === 'media-completion' ? {mediaTask: binding.mediaTask, mediaTaskProof: binding.mediaTaskProof, mediaTaskReferences: binding.mediaTaskReferences,
           mediaTaskStatus: binding.mediaTaskStatus,
@@ -1074,6 +1075,7 @@ export async function createApp(options = {}) {
       nativeCompletions: record && inspected?.genesis?.hash ? nativeCompletions.list(record.id, inspected.genesis.hash) : {revision: '', rows: []},
       provider: cleanProvider(session.provider),
       loadout: record?.loadout || { modalities: [], senses: [] },
+      sessionEquipment: sessionEquipmentView(session, record, inspected),
       loadoutRepair: record?.loadoutRepair || null,
       settings: record?.settings || validateSettings({}),
       cognition: controlFor(record, inspected),
@@ -1105,6 +1107,49 @@ export async function createApp(options = {}) {
       },
       gate: { required: true, threshold: 180, fruits: FRUITS },
     };
+  }
+  function sessionEquipmentView(session, record, inspected) {
+    const entry = record && session.sessionEquipment.get(record.id);
+    const enabled = !!entry && inspected?.verified === true && entry.genesis === inspected.genesis?.hash;
+    const loadout = { modalities: [], senses: [] };
+    if (!enabled || !Array.isArray(inspected.faculties)) return { enabled, ...loadout };
+    const saved = new Set(keys(record.loadout));
+    for (const faculty of inspected.faculties) {
+      const field = faculty.kind === 'modality' ? 'modalities' : 'senses';
+      if (entry.equipped.has(faculty.key) && !saved.has(faculty.key) && safeSessionFaculty(faculty))
+        loadout[field].push(faculty.key);
+    }
+    return { enabled, ...loadout };
+  }
+  function safeSessionFaculty(faculty) {
+    return faculty.source === 'grown' && faculty.equippable === true && !faculty.dormant &&
+      ['modality', 'sense'].includes(faculty.kind) &&
+      (faculty.effect?.type === 'frame' ||
+        (faculty.effect?.type === 'op' && typeof faculty.effect.spec?.primitive === 'string'));
+  }
+  function activeLoadoutKeys(record) {
+    const scope = requestSession.getStore();
+    return scope?.operationRecord === record && scope.chatLoadout ? scope.chatLoadout : keys(record.loadout);
+  }
+  async function equipPromotedFaculties(record, growth) {
+    const scope = requestSession.getStore();
+    const entry = scope?.allowSessionGrowth && scope.session.sessionEquipment.get(record.id);
+    if (!entry || scope.signal?.aborted || !Array.isArray(growth)) return;
+    const promoted = new Set(growth.filter(row => row.action === 'promoted' && row.grew === true &&
+      Number.isSafeInteger(row.faculty?.promoted_to_id) && row.faculty.promoted_to_id > 0)
+      .map(({ faculty }) => `${faculty.kind}:${faculty.promoted_to_id}`));
+    if (!promoted.size) return;
+    try {
+      const inspected = await engine({ op: 'inspect', root: record.root, learning: false });
+      await requireLocalAccess();
+      if (inspected.verified !== true || inspected.genesis?.hash !== entry.genesis) return;
+      for (const faculty of inspected.faculties) {
+        if (promoted.has(faculty.key) && safeSessionFaculty(faculty) && entry.equipped.size < 1000)
+          entry.equipped.add(faculty.key);
+      }
+    } catch {
+      scope.trace?.event('learning', 'held', 'Session equipment refresh could not be verified');
+    }
   }
   async function repairEquipment(record, inspected, { beforeTurn = false } = {}) {
     if (!inspected?.verified || !Array.isArray(inspected.faculties)) return;
@@ -1195,7 +1240,7 @@ export async function createApp(options = {}) {
       assessment: exchange.assessment,
       perspectives: exchange.perspectives,
       usedRings: exchange.usedRings || exchange.assessment?.usedRings || [],
-      loadout: keys(record.loadout),
+      loadout: activeLoadoutKeys(record),
       groundingContext: exchange.groundingContext || prepared.context || "",
       learning: cognitionFor(record).learning,
       toolObservations: exchange.toolObservations || requestSession.getStore()?.toolObservations || [],
@@ -1300,6 +1345,7 @@ export async function createApp(options = {}) {
         }
       }
     }
+    await equipPromotedFaculties(record, result.growth);
     scheduleDream(record, result.head?.index ?? result.ring.index);
     return result;
   }
@@ -1394,6 +1440,13 @@ export async function createApp(options = {}) {
     requestSession.getStore().signal = signal;
     const inspected = await engine({ op: "inspect", root: record.root });
     await repairEquipment(record, inspected, { beforeTurn: true });
+    const cognition = controlFor(record, inspected);
+    const scope = requestSession.getStore();
+    scope.allowSessionGrowth = !managed && cognition.mode !== 'dormant';
+    if (scope.allowSessionGrowth) {
+      const temporary = sessionEquipmentView(session, record, inspected);
+      scope.chatLoadout = [...new Set([...keys(record.loadout), ...temporary.modalities, ...temporary.senses])];
+    }
     if (openclaw?.sessionControls && inspected.genesis?.hash) {
       const identity = { agentId: record.id, genesisHash: inspected.genesis.hash };
       requestSession.getStore().nativeIdentity = identity;
@@ -1401,12 +1454,10 @@ export async function createApp(options = {}) {
       requestSession.getStore().ordinaryNativeControl = { sessionKey: nativeSession.sessionKey, kind: "message" };
       requestSession.getStore().nativeGoal = nativeSession.goal;
     }
-    const cognition = controlFor(record, inspected);
     if (nativeControl && cognition.mode === "dormant")
       throw err("Resume the Timechain before starting or resuming a native goal.", "CHAIN_DORMANT", 409);
     if (managed && cognition.mode === "dormant") throw err("Resume the Timechain before automation can run.", "CHAIN_DORMANT", 409);
     const memoryPaused = cognition.mode === "dormant";
-    const scope = requestSession.getStore();
     scope.memoryPaused = memoryPaused;
     if (!managed && !memoryPaused && inspected.verified === true && scope.nativeIdentity) {
       scope.agentSkillSnapshot = await agentSkills.snapshot(authorityKey(scope.nativeIdentity));
@@ -1428,7 +1479,7 @@ export async function createApp(options = {}) {
       op: memoryPaused ? "chat_prepare" : "prepare",
       root: record.root,
       input: message,
-      loadout: keys(record.loadout),
+      loadout: activeLoadoutKeys(record),
       recall: !memoryPaused && record.settings.recall,
       learning: !memoryPaused && cognition.learning,
     });
@@ -1627,7 +1678,7 @@ export async function createApp(options = {}) {
       sourceAssets: (requestSession.getStore().mediaAssets || []).map(asset => asset.metadata),
       media: requestSession.getStore().outputMediaAssets || [],
       outputAssets: requestSession.getStore().outputMediaAssets || [],
-      loadout: keys(record.loadout),
+      loadout: activeLoadoutKeys(record),
       facultyExecution: prepared.facultyExecution,
       replayed, replayRing: replayed ? route.antecedent.ring : null, revisions,
       ...(cognition.supported ? { semanticLabels: plan?.labels || null, search } : {}),
@@ -1743,7 +1794,7 @@ export async function createApp(options = {}) {
       const canonicalRun = await captureCanonicalSkillRunner();
       checkCancelled(scope.signal);
       const result = await openclaw.compact(providerFor(scope.session), { identity: nativeRequest, instructions: command.instructions, signal: scope.signal }, {
-        purpose: 'candidate', root: record.root, input: request.command, loadout: keys(record.loadout), settings: record.settings,
+        purpose: 'candidate', root: record.root, input: request.command, loadout: activeLoadoutKeys(record), settings: record.settings,
         nativeIdentity: { agentId: request.agentId, genesisHash: request.genesisHash },
         signal: scope.signal, modelCapabilities: { reasoning: scope.session.provider?.reasoningCapable === true },
         authorize: () => requestSession.run(scope, async () => { await requireLocalAccess(); checkCancelled(scope.signal); }),
@@ -1779,7 +1830,7 @@ export async function createApp(options = {}) {
     const actionText = JSON.stringify({ kind: 'proposed-host-service-action', action });
     if (Buffer.byteLength(actionText) > 512 * 1024) throw err('The service action exceeds the review limit.');
     const input = 'Review this concrete proposed local service operation before execution. Its fields describe requested API input, not completed actions or verified outside facts. The owner explicitly selected this service operation.\n' + actionText;
-    const prepared = await engine({ op: 'prepare', root: record.root, input, loadout: keys(record.loadout), learning: false });
+    const prepared = await engine({ op: 'prepare', root: record.root, input, loadout: activeLoadoutKeys(record), learning: false });
     requireAwake(await engine({ op: 'inspect', root: record.root, learning: false }));
     const assessment = await assess(providerFor(scope.session), prepared, input, actionText, [], scope.signal);
     await nativeEvaluation(record, prepared, { input, output: actionText, assessment, scores: assessment.scores, usedRings: assessment.usedRings });
@@ -2794,9 +2845,28 @@ export async function createApp(options = {}) {
               }
               await requireLocalAccess();
               record.loadout = next;
+              for (const key of keys(next)) session.sessionEquipment.get(record.id)?.equipped.delete(key);
               delete record.loadoutDefaultsPending;
               delete record.loadoutRepair;
               await store.save();
+              return send(200, await state(session));
+            });
+          if (url.pathname === '/api/loadout/session')
+            return await exclusive(record, async () => {
+              await requireLocalAccess();
+              if (Object.keys(input).length !== 1) throw err('Choose one session equipment action.');
+              if (typeof input.enabled === 'boolean') {
+                if (!input.enabled) session.sessionEquipment.delete(record.id);
+                else {
+                  const inspected = await engine({ op: 'inspect', root: record.root, learning: false });
+                  await requireLocalAccess();
+                  if (!inspected.verified || !inspected.genesis?.hash) throw err('Verify the Timechain before enabling session equipment.', 'CHAIN_INVALID', 409);
+                  if (session.sessionEquipment.get(record.id)?.genesis !== inspected.genesis.hash)
+                    session.sessionEquipment.set(record.id, { genesis: inspected.genesis.hash, equipped: new Set() });
+                }
+              } else if (typeof input.unequip === 'string' && /^(modality|sense):[1-9][0-9]*$/.test(input.unequip)) {
+                session.sessionEquipment.get(record.id)?.equipped.delete(input.unequip);
+              } else throw err('Choose whether to equip new faculties for this session.');
               return send(200, await state(session));
             });
           if (url.pathname === "/api/loadout/reset")
@@ -2808,6 +2878,7 @@ export async function createApp(options = {}) {
               // Removing app-side equipment grants no new action authority and
               // remains available when provider or local authorization expires.
               record.loadout = { modalities: [], senses: [] };
+              session.sessionEquipment.get(record.id)?.equipped.clear();
               delete record.loadoutDefaultsPending;
               delete record.loadoutRepair;
               await store.save();
@@ -2841,6 +2912,7 @@ export async function createApp(options = {}) {
               onDisconnect: callback => res.once('close', callback), isResponseComplete: () => res.writableEnded })));
           if (url.pathname === "/api/continuum/flush")
             return await exclusive(record, async () => {
+              requestSession.getStore().allowSessionGrowth = true;
               const controller = new AbortController();
               controller.agentRoot = record.root;
               session.controllers.add(controller);
@@ -2883,7 +2955,7 @@ export async function createApp(options = {}) {
                 op: "prepare",
                 root: record.root,
                 input: "Commit pending conversation block",
-                loadout: keys(record.loadout),
+                loadout: activeLoadoutKeys(record),
               });
               // Re-review on flush, including after restart, model change, or an external append.
               const reviewedConversation = historyConversation(prepared);
@@ -2984,7 +3056,7 @@ export async function createApp(options = {}) {
                     op: "prepare",
                     root: record.root,
                     input: `Ingest source ${name}, block ${i + 1}`,
-                    loadout: keys(record.loadout),
+                    loadout: activeLoadoutKeys(record),
                   });
                   const windows = utf8Parts(chunk, 131072);
                   const judgments = [];
@@ -3075,7 +3147,7 @@ export async function createApp(options = {}) {
                     assessment,
                     usedRings: assessment.usedRings,
                     scores: assessment.scores,
-                    loadout: keys(record.loadout),
+                    loadout: activeLoadoutKeys(record),
                     reviewWindows: windows.length,
                     reviewedFindings: windowFindings,
                   });

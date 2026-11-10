@@ -166,6 +166,12 @@ jobs:
           version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
           python3 installer/acceptance_posix.py --installer "$RUNNER_TEMP/chainchat-setup/CypherTempre-ChainChat-Setup-$version-${{ matrix.suffix }}" --work-root "$RUNNER_TEMP/chainchat-acceptance"
           python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); assert report["platform"]==sys.argv[2], "Runner architecture did not match its gate"; assert report["version"]==sys.argv[3]; assert report["shortcutsInSyntheticHome"] is True and report["productionUserInstallationTouched"] is False' "$RUNNER_TEMP/chainchat-acceptance/acceptance-report.json" '${{ matrix.platform }}-${{ matrix.architecture }}' "$version"
+      - name: Build and verify both macOS app architectures
+        if: matrix.id == 'macos-arm64'
+        shell: bash
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          python3 installer/sign_macos.py --prepare-only --installer "$RUNNER_TEMP/chainchat-setup/CypherTempre-ChainChat-Setup-$version-macos.zip" --output-dir "$RUNNER_TEMP/chainchat-macos-app"
       - name: Keep acceptance report and exact artifact checksums
         if: always()
         uses: actions/upload-artifact@v4

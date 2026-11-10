@@ -85,14 +85,57 @@ async function fixture(t, options = {}) {
       ...(input === undefined ? {} : { body: JSON.stringify(input) }) });
     return { status: response.status, body: await response.json() };
   };
-  bearer = (await call('/api/pair', { code: 'LOADOUT-REPAIR-FIXTURE' })).body.token;
+  const pairSession = async () => {
+    bearer = (await call('/api/pair', { code: 'LOADOUT-REPAIR-FIXTURE' })).body.token;
+    assert.ok(bearer);
+  };
+  await pairSession();
   const paired = await call('/api/agents/pair', { root }); assert.equal(paired.status, 200, JSON.stringify(paired.body));
   const record = app.store.agents.find(agent => agent.root === root);
   assert.ok(record);
   if (options.provider !== false) assert.equal((await call('/api/provider', { provider: 'compatible', model: 'synthetic-fixture', baseUrl: 'http://127.0.0.1:1/v1',
     apiKey: 'synthetic-fixture-key' })).status, 200);
-  return { ...app, root, directory, original, registryBytes, call, record, paired };
+  return { ...app, root, directory, original, registryBytes, call, record, paired, pairSession };
 }
+
+test('real Cambium promotions participate in the next interactive turn without saving the session loadout', { timeout: 180000 }, async t => {
+  const prepared = [];
+  const f = await fixture(t, {
+    inspect(request, result) {
+      if (request.op === 'prepare') prepared.push(request.loadout);
+      return result;
+    },
+    generate: () => ({ text: 'We can consider the question patiently and clearly, and acknowledge uncertainty where information is missing.' }),
+  });
+  const initial = structuredClone(f.record.loadout);
+  assert.equal(f.paired.body.sessionEquipment.enabled, false);
+  assert.equal((await f.call('/api/loadout/session', { enabled: true }, false)).status, 401);
+  assert.equal((await f.call('/api/loadout/session', { enabled: true })).body.sessionEquipment.enabled, true);
+  assert.equal((await f.call('/api/cognition', { autoRoute: false, semanticRecall: false })).status, 200);
+
+  const first = await f.call('/api/chat', { message: 'Help me reason patiently about this question.' });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const equipped = [...first.body.state.sessionEquipment.modalities, ...first.body.state.sessionEquipment.senses];
+  assert.ok(equipped.length, 'At least one real promoted faculty is equipped');
+  assert.ok(equipped.every(key => !prepared[0].includes(key)), 'The just-completed turn did not use future equipment');
+  assert.deepEqual(f.record.loadout, initial);
+
+  const second = await f.call('/api/chat', { message: 'Explain why it helps to acknowledge uncertainty patiently.' });
+  assert.equal(second.status, 200, JSON.stringify(second.body));
+  assert.ok(equipped.every(key => prepared.at(-1).includes(key)));
+  assert.deepEqual(JSON.parse(await fs.readFile(f.store.file, 'utf8'))[0].loadout, initial);
+  const removed = await f.call('/api/loadout/session', { unequip: equipped[0] });
+  assert.equal(removed.status, 200);
+  assert.ok(![...removed.body.sessionEquipment.modalities, ...removed.body.sessionEquipment.senses].includes(equipped[0]));
+
+  assert.equal((await f.call('/api/unpair', {})).status, 200);
+  await f.pairSession();
+  const fresh = await f.call('/api/agents/pair', { root: f.root });
+  assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+  assert.deepEqual(fresh.body.sessionEquipment, { enabled: false, modalities: [], senses: [] });
+  assert.deepEqual(fresh.body.loadout, initial);
+  assert.ok(equipped.every(key => fresh.body.faculties.some(faculty => faculty.key === key)));
+});
 
 test('a valid imported original catalogue pairs and chats with only its actual default faculties', { timeout: 180000 }, async t => {
   const f = await fixture(t);

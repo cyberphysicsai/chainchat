@@ -619,6 +619,7 @@ async function openCognition() {
     await refreshCognition();
     const current = cognition();
     for (const [id, key] of [["learningEnabled", "learning"], ["autoRoute", "autoRoute"], ["semanticRecall", "semanticRecall"], ["autoSprout", "autoSprout"], ["autoDream", "autoDream"]]) $(id).checked = current[key];
+    $("sessionAutoEquip").checked = state.sessionEquipment?.enabled === true;
     $("revisionLimit").value = current.revisionLimit;
     const result = await api("/api/capabilities");
     capabilities = Array.isArray(result.capabilities) ? result.capabilities : Array.isArray(result.items) ? result.items : [];
@@ -638,7 +639,11 @@ function isEquipped(faculty) {
   const chosen =
     state.loadout?.[faculty.kind === "modality" ? "modalities" : "senses"] ||
     [];
-  return chosen.some((id) => rawId(id) === rawId(facultyId(faculty)));
+  return isSessionEquipped(faculty) || chosen.some((id) => rawId(id) === rawId(facultyId(faculty)));
+}
+function isSessionEquipped(faculty) {
+  const field = faculty.kind === "modality" ? "modalities" : "senses";
+  return state.sessionEquipment?.[field]?.includes(facultyId(faculty)) === true;
 }
 function renderFaculties() {
   const faculties = normalizeFaculties(),
@@ -667,7 +672,8 @@ function renderFaculties() {
     : "BASE\nCATALOGUE";
   $("growthNote").textContent = state.agent
     ? cognition().mode === "dormant" ? "Timechain is paused. Equipped faculties are saved for when you resume."
-      : "Your live catalogue refreshes as this agent learns. New faculties wait for your equipment choice."
+      : state.sessionEquipment?.enabled ? "Newly promoted faculties can equip for this chat session."
+        : "Your live catalogue refreshes as this agent learns. New faculties wait for your equipment choice."
     : "Your catalogue grows as your agent learns. Pair a chain to equip faculties.";
   if (executions.length) $("growthNote").textContent += " Receipt badges describe the last chain turn; equipped does not mean running.";
   const list = $("facultyList");
@@ -724,7 +730,8 @@ function renderFaculties() {
       el(
         "span",
         "",
-        freshIds.has(facultyIdentity(faculty)) ? "NEW · " + (faculty.equippable === false ? "EMERGING" : "AVAILABLE") : selected
+        isSessionEquipped(faculty) ? "EQUIPPED FOR SESSION" :
+          freshIds.has(facultyIdentity(faculty)) ? "NEW · " + (faculty.equippable === false ? "EMERGING" : selected ? "EQUIPPED" : "AVAILABLE") : selected
           ? "EQUIPPED"
           : faculty.equippable === false
             ? "EMERGING"
@@ -759,6 +766,13 @@ async function toggleFaculty(faculty) {
     toast(
       "Your current turn is using this loadout. Change it after the turn completes.",
     );
+    return;
+  }
+  if (isSessionEquipped(faculty)) {
+    try {
+      applyState(await api("/api/loadout/session", { unequip: facultyId(faculty) }));
+      toast(`${faculty.name} unequipped for this session.`);
+    } catch (error) { toast(error.message, true); }
     return;
   }
   const kind = faculty.kind === "modality" ? "modalities" : "senses";
@@ -1328,7 +1342,7 @@ $("pairForm").addEventListener("submit", (event) => {
       selectedBridgePort = bridgePort($("bridgePort").value);
     const bridge = await api("/api/status");
     if (!supportedBridgeVersion(bridge.version))
-      throw new Error("Install ChainChat 1.0.3 or newer to use this interface and its setup guide. OpenClaw and PoI are included.");
+      throw new Error("Install ChainChat 1.0.4 or newer to use this interface and its setup guide. OpenClaw and PoI are included.");
     const result = await api("/api/pair", { code: $("pairCode").value.trim() });
     token = result.token;
     setupSessionGeneration++;
@@ -2207,6 +2221,24 @@ $("cognitionForm").addEventListener("submit", event => {
     toast("Cognition settings saved for this agent.");
   });
 });
+$("sessionAutoEquip").addEventListener("change", async event => {
+  const toggle = event.currentTarget;
+  const previous = state.sessionEquipment?.enabled === true;
+  if (requestBusy || cognitionBusy) {
+    toggle.checked = previous;
+    toast("Change session equipment after the current turn.");
+    return;
+  }
+  toggle.disabled = true;
+  try {
+    applyState(await api("/api/loadout/session", { enabled: toggle.checked }));
+    toast(state.sessionEquipment?.enabled ? "Newly promoted faculties can equip for this session." : "Session equipment cleared.");
+  } catch (error) { toast(error.message, true); }
+  finally {
+    toggle.checked = state.sessionEquipment?.enabled === true;
+    toggle.disabled = false;
+  }
+});
 
 $("toggleChainMode").addEventListener("click", async () => {
   if (cognition().mode !== "dormant") {
@@ -2734,7 +2766,7 @@ async function start() {
       ? "CONNECTING TO LOCAL APP"
       : "APP UPDATE REQUIRED";
     if (status.version) $("appVersion").textContent = `v${status.version}`;
-    if (!supportedBridgeVersion(status.version)) throw new Error("Install ChainChat 1.0.3 or newer to connect automatically.");
+    if (!supportedBridgeVersion(status.version)) throw new Error("Install ChainChat 1.0.4 or newer to connect automatically.");
     const paired = await connectLocalSession({ origin: location.origin, nonce: bootstrap,
       storage: localTabStorage(), request: api });
     token = paired.token;
