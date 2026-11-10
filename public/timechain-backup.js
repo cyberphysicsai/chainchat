@@ -27,7 +27,7 @@ export function mountTimechainBackups({ document, local, openDialog, requirePair
     byId('timechainBackupLocalNotice').hidden = local;
     byId('timechainBackupLocalControls').hidden = !local;
     byId('timechainBackupAgent').textContent = selectedAgent
-      ? `Selected Timechain: ${selectedAgent.name}`
+      ? `Backing up ${selectedAgent.name}.`
       : 'Create or pair a Timechain before making a backup.';
     submitButtons[0].disabled = !selectedAgent;
     openDialog('timechainBackupDialog');
@@ -85,25 +85,31 @@ export function mountTimechainBackups({ document, local, openDialog, requirePair
     }
     clearPasswords();
     void run('Verifying and encrypting the selected Timechain…', async signal => {
-      const save = typeof window.showSaveFilePicker === 'function'
-        ? await window.showSaveFilePicker({ suggestedName: backupName, types: [{ description: 'ChainChat backup', accept: { [mime]: ['.ctbackup'] } }] })
-        : null;
+      let save;
+      if (typeof window.showSaveFilePicker === 'function') {
+        try {
+          save = await window.showSaveFilePicker({ suggestedName: backupName,
+            types: [{ description: 'ChainChat backup', accept: { [mime]: ['.ctbackup'] } }] });
+        } catch (failure) {
+          if (!['SecurityError', 'NotAllowedError'].includes(failure.name)) throw failure;
+        }
+      }
       signal.throwIfAborted();
       const response = await post('/api/timechain/backup', JSON.stringify({ agentId: selectedAgent.id, passphrase }), 'application/json', signal);
       if (save) {
         const output = await save.createWritable();
         await response.body.pipeTo(output, { signal });
-      } else {
-        const url = URL.createObjectURL(await response.blob());
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = backupName;
-        document.body.append(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        return 'Verified backup saved. Keep the file and passphrase in separate safe places.';
       }
-      return 'Verified backup saved. Keep the file and passphrase in separate safe places.';
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = backupName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      return 'Backup download started. Check your browser downloads for the saved file.';
     });
   });
 
