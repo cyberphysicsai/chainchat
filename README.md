@@ -98,7 +98,7 @@ The UI, Gateway, native chain, registries and pending blocks run on the user's m
 
 ## Finch switch
 
-In the installed app, select **Emergency halt** to stop chat and managed work across this installation. The supervisor blocks new requests and late replies, cancels managed runs, and shuts down the owned OpenClaw gateway and browser. The halt survives restart. Use **Re-arm & settings** and select **Verify and re-arm** to check the selected Timechain and mandatory Proof of Interaction runtime. Reconnect your model after re-arming.
+In the installed app, select **Emergency halt** to stop chat and managed work across this installation. The supervisor blocks new agent work and late replies, cancels managed runs, and shuts down the owned OpenClaw gateway and browser. The halt survives restart. Use **Re-arm & settings** and select **Verify and re-arm** to check the selected Timechain and mandatory Proof of Interaction runtime. If the chain needs repair, the local owner can run confirmed recovery in Advanced Timechain maintenance while agent work remains stopped. Reconnect your model after re-arming.
 
 For remote halt, enroll an owner wallet and a public HTTPS JSON feed you control in **Halt settings**. Export the enrollment profile, open it on a wallet device using the [ChainChat wallet signer](https://cyphertempre.ai/emergency-halt-sign.html), and sign the command. Publish the signed JSON at your feed URL. The installed supervisor polls the feed while it is running. Each wallet-only command expires after 15 minutes, applies once to its enrolled installation, and moves no tokens. Export a fresh profile after re-arming or changing enrollment.
 

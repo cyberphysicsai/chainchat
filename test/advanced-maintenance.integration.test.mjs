@@ -67,6 +67,11 @@ test('owner-only maintenance preserves verified history and resumes a native cor
   const legacy = Buffer.concat([Buffer.from('{"registry":"grown","modalities":[],"senses":[],"note":"legacy '),
     Buffer.from([0x97]), Buffer.from(' text"}')]);
   await fs.writeFile(grown, legacy);
+  assert.equal((await post('/api/emergency-halt/stop', { confirm: true }, owner)).halted, true);
+  assert.equal((await post('/api/chat', { message: 'Write while halted' }, owner, origin, 423)).code, 'EMERGENCY_HALTED');
+  assert.equal((await post(endpoint, { action: 'list' }, remote, hosted, 403)).code, 'LOCAL_ONLY');
+  assert.equal((await command('witness-verify', {}, 423)).code, 'EMERGENCY_HALTED');
+  assert.equal((await command('corpus-report', {}, 423)).code, 'EMERGENCY_HALTED');
   const listed = await post(endpoint, {action: 'list'}, owner);
   assert.equal(listed.agents[0].id, agent.id);
   const target = {target: 'registry/grown.json'};
@@ -88,6 +93,9 @@ test('owner-only maintenance preserves verified history and resumes a native cor
   assert.deepEqual(await fs.readFile(path.join(agent.root, 'chain', 'rings.jsonl')), originalRings);
   const anchor = {reason: 'Owner reviewed restored registry and byte-exact backup'};
   assert.equal((await apply('reanchor', anchor, await preview('reanchor', anchor))).receipt.reanchored, true);
+  assert.equal((await command('status')).offlineRecovery, true);
+  assert.equal((await post('/api/emergency-halt/rearm', { confirm: true }, owner)).halted, false);
+  assert.equal((await command('status')).offlineRecovery, false);
 
   const settings = { witnesses: 3, threshold: 2 };
   const firstWitnessPlan = await preview('witness-init', settings);

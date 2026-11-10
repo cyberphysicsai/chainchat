@@ -1394,7 +1394,7 @@
           <label class="field">First affected ring<input id="maintenanceFirstRing" type="number" min="1" step="1"></label>
           <button type="button" class="secondary-button" id="maintenanceRecoverImmune">Preview quarantine and recovery</button>
         </div>
-        <div class="native-card">
+        <div class="native-card" id="maintenanceWitnessGroup">
           <h3>Local witness quorum</h3>
           <p>Witnesses attest to ring hashes. These keys share this machine’s trust boundary. New seals are automatically attested after setup.</p>
           <p id="maintenanceWitnessStatus" class="fine-print"></p>
@@ -1408,7 +1408,7 @@
             <button type="button" class="secondary-button" id="maintenanceAttestHead">Preview head attestation</button>
           </div>
         </div>
-        <div class="native-card">
+        <div class="native-card" id="maintenanceCorpusGroup">
           <h3>Full corpus review</h3>
           <p>Read ingested Continuum blocks and record a specific observation for each one. The chain keeps your place across sessions. Review is manual, and source text stays in this app.</p>
           <p id="maintenanceCorpusStatus" class="fine-print"></p>

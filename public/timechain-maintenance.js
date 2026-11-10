@@ -109,13 +109,13 @@ export function mountTimechainMaintenance({ document, api, local, connected, onC
   }
 
   async function refresh(active) {
-    const { status } = await selected('status');
+    const { status, offlineRecovery } = await selected('status');
     if (!active()) return;
     const held = status.interruptedMaintenance || status.locked || status.paused;
     const head = status.head ? `Verified immutable ledger at ring ${status.head.index}.` : 'The immutable ledger failed verification.';
     const transaction = status.interruptedMaintenance;
     const journal = transaction?.id ? ` Review chain/maintenance-transactions/${transaction.id}/transaction.json.` : '';
-    $('maintenanceSummary').textContent = `${head}${transaction ? ` An interrupted maintenance transaction requires local review.${journal}` : ''}${status.locked ? ' Immune lockdown is active.' : ''}${status.paused ? ' The Timechain is paused.' : ''}`;
+    $('maintenanceSummary').textContent = `${offlineRecovery ? 'Emergency Halt is active. Local recovery only. ' : ''}${head}${transaction ? ` An interrupted maintenance transaction requires local review.${journal}` : ''}${status.locked ? ' Immune lockdown is active.' : ''}${status.paused ? ' The Timechain is paused.' : ''}`;
     setOptions(target, status.targets.map(value => ({ value, label: value })), target.value);
     updateTarget();
     $('maintenanceReanchor').disabled = !status.integrity || held;
@@ -123,6 +123,8 @@ export function mountTimechainMaintenance({ document, api, local, connected, onC
     change('maintenanceImmune', !status.integrity || !status.locked || status.interruptedMaintenance || status.head.index < 1);
     showWitness(status.witness, status.integrity && !held);
     showCorpus(status.corpus);
+    change('maintenanceWitnessGroup', offlineRecovery === true);
+    change('maintenanceCorpusGroup', offlineRecovery === true);
     $('maintenanceOpenCorpus').disabled = held;
     $('maintenanceRecordFinding').disabled = held;
   }

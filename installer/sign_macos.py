@@ -50,7 +50,9 @@ def prepare(archive: Path, app: Path, version: str):
                     "-O", str(LAUNCHER), "-o", binary)
             slices.append(binary)
         command("xcrun", "lipo", "-create", *slices, "-output", str(executable))
-    command("xcrun", "lipo", "-verify_arch", "arm64", "x86_64", str(executable))
+    slices = command("xcrun", "lipo", "-archs", str(executable), capture=True).stdout.split()
+    if sorted(slices) != ["arm64", "x86_64"]:
+        raise ValueError("The installer needs both macOS architectures.")
     command("plutil", "-lint", str(contents / "Info.plist"))
 
 

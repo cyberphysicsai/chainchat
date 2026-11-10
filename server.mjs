@@ -1057,8 +1057,17 @@ export async function createApp(options = {}) {
     if (inspected?.runtime?.mode === "dormant")
       throw err("The Timechain is paused. Resume it before changing memory or faculties.", "CHAIN_DORMANT", 409);
   }
-  async function exclusive(record, action, { control = false } = {}) {
-    emergency.assertAvailable(requestSession.getStore()?.haltEpoch);
+  function assertOfflineRecovery(scope) {
+    const status = emergency.publicStatus();
+    if (!scope?.session?.localOwner || !status.halted || status.transitioning || status.storageError || status.stopError ||
+        emergency.epoch() !== scope.haltEpoch)
+      throw err('Wait for Emergency Halt to settle before repairing a Timechain.', 'EMERGENCY_HALTED', 423);
+    authority.assertCurrent(scope);
+  }
+  async function exclusive(record, action, { control = false, offlineRecovery = false } = {}) {
+    const current = requestSession.getStore();
+    if (offlineRecovery) assertOfflineRecovery(current);
+    else emergency.assertAvailable(current?.haltEpoch);
     const identity =
       process.platform === "win32" ? record.root.toLowerCase() : record.root;
     if (busy.has(identity) || (!control && pausing.has(identity)))
@@ -1068,7 +1077,6 @@ export async function createApp(options = {}) {
         409,
       );
     busy.add(identity);
-    const current = requestSession.getStore();
     if (current) current.operationRecord = record;
     const trace = current?.session ? activityFor(current.session, record) : null;
     if (trace) { current.trace = trace; trace.begin("Local agent operation"); }
@@ -2235,6 +2243,8 @@ export async function createApp(options = {}) {
             throw err('Confirm this local Emergency Halt action.');
           if (url.pathname === '/api/emergency-halt/stop') return send(200, await emergency.trip('local'));
           if (url.pathname === '/api/emergency-halt/rearm') {
+            if (emergency.blocked() && (busy.size || pausing.size || engineWork.size))
+              throw err('A local Timechain operation is still settling. Wait, then re-arm.', 'EMERGENCY_BUSY', 409);
             const result = await emergency.rearm();
             if (!result.halted) void automation?.reconcile().catch(() => {});
             return send(200, result);
@@ -2244,6 +2254,47 @@ export async function createApp(options = {}) {
       }
       if (emergency.blocked() && req.method === 'GET' && url.pathname === '/api/state')
         return send(200, await state(session));
+      if (req.method === 'POST' && url.pathname === '/api/timechain/maintenance') {
+        if (!session.localOwner || !localBrowser)
+          throw err('Open the installed local app to use Timechain maintenance.', 'LOCAL_ONLY', 403);
+        const offlineRecovery = emergency.blocked();
+        const scope = { session, token, epoch: authority.epoch(session), haltEpoch: emergency.epoch() };
+        if (!offlineRecovery) workEpoch = scope.haltEpoch;
+        return await canonicalSkills.run(() => requestSession.run(scope, async () => {
+          const authorize = () => offlineRecovery ? assertOfflineRecovery(scope) : requireLocalAccess();
+          await authorize();
+          const input = await body(req, 16_384);
+          await authorize();
+          const recoveryReads = ['status', 'snapshots'];
+          const recoveryChanges = ['encoding', 'restore-registry', 'reanchor', 'immune-recover'];
+          const fields = ['agentId', 'action', 'phase', 'confirm', 'previewDigest', 'target', 'ring', 'reason',
+            'witnesses', 'threshold', 'offset', 'finding'];
+          if (Object.keys(input).some(key => !fields.includes(key)))
+            throw err('Use only the supported local maintenance fields.');
+          if (input.action === 'list')
+            return send(200, { agents: store.agents.map(({id, name}) => ({id, name})), selected: session.agentId });
+          if (offlineRecovery && ![...recoveryReads, ...recoveryChanges].includes(input.action))
+            throw err('Only local Timechain recovery is available during Emergency Halt.', 'EMERGENCY_HALTED', 423);
+          const reads = [...recoveryReads, 'witness-verify', 'corpus-next', 'corpus-report'];
+          const changes = [...recoveryChanges, 'witness-init', 'witness-attest', 'corpus-open', 'corpus-record'];
+          if (!(reads.includes(input.action) && input.phase === undefined ||
+                changes.includes(input.action) && ['preview', 'apply'].includes(input.phase)))
+            throw err('Select a valid local maintenance operation.');
+          const target = store.agents.find(agent => agent.id === input.agentId);
+          if (!target) throw err('Select a saved Timechain.', 'AGENT_REQUIRED', 409);
+          if (input.phase === 'apply' && input.confirm !== true)
+            throw err('Confirm the reviewed change before applying it.', 'CONFIRMATION_REQUIRED', 409);
+          assertCredentialIsolation(session.provider || {}, input);
+          assertServiceIsolation(input);
+          return await exclusive(target, async () => {
+            await authorize();
+            const request = { ...input, op: 'advanced_maintenance', root: target.root, learning: false };
+            const output = await (offlineRecovery ? runNativeEngine(request) : engine(request));
+            await authorize();
+            return send(200, input.action === 'status' ? { ...output, offlineRecovery } : output);
+          }, { control: true, offlineRecovery });
+        }), { refresh: !offlineRecovery && canonicalUpdates });
+      }
       workEpoch = emergency.epoch();
       emergency.assertAvailable(workEpoch);
       return await canonicalSkills.run(() => requestSession.run(
@@ -2736,32 +2787,6 @@ export async function createApp(options = {}) {
             session.agentId = input.id;
             if (session.provider && session.provider.provider !== 'native') await forgetNativeRoute(session);
             return send(200, await state(session));
-          }
-          if (url.pathname === "/api/timechain/maintenance") {
-            if (!localBrowser) throw err("Open the installed local app to use Timechain maintenance.", "LOCAL_ONLY", 403);
-            await requireLocalAccess();
-            const reads = ["status", "snapshots", "witness-verify", "corpus-next", "corpus-report"];
-            const changes = ["encoding", "restore-registry", "reanchor", "immune-recover", "witness-init", "witness-attest", "corpus-open", "corpus-record"];
-            const fields = ["agentId", "action", "phase", "confirm", "previewDigest", "target", "ring", "reason", "witnesses", "threshold", "offset", "finding"];
-            if (Object.keys(input).some(key => !fields.includes(key)) || bytes(input) > 16_384)
-              throw err("Use only the supported local maintenance fields.");
-            if (input.action === "list")
-              return send(200, { agents: store.agents.map(({id, name}) => ({id, name})), selected: session.agentId });
-            if (!(reads.includes(input.action) && input.phase === undefined ||
-                  changes.includes(input.action) && ["preview", "apply"].includes(input.phase)))
-              throw err("Select a valid local maintenance operation.");
-            const target = store.agents.find(agent => agent.id === input.agentId);
-            if (!target) throw err("Select a saved Timechain.", "AGENT_REQUIRED", 409);
-            if (input.phase === "apply" && input.confirm !== true)
-              throw err("Confirm the reviewed change before applying it.", "CONFIRMATION_REQUIRED", 409);
-            assertCredentialIsolation(session.provider, input);
-            assertServiceIsolation(input);
-            return await exclusive(target, async () => {
-              await requireLocalAccess();
-              const output = await engine({ ...input, op: "advanced_maintenance", root: target.root, learning: false });
-              await requireLocalAccess();
-              return send(200, output);
-            }, { control: true });
           }
           const record = agentFor(session);
           if (url.pathname === "/api/audit/read") {
