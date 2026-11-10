@@ -267,6 +267,14 @@ Reviews, retrieval plans and Chronosynaptic candidates normally allow **4,096 to
 
 The server binds to loopback, validates Host and Origin, and requires an owner-authorized session and an in-memory bearer token. The installed launcher supplies a single-use connection link; advanced website mode uses an explicit pairing code. Cross-origin requests are rejected by default. `CT_CHAT_PUBLIC_ORIGINS` can explicitly allow a trusted hosted frontend; local serving is the tested preview path. The application does not upload a whole chain, but selected recall content can be sensitive. Agent state and pending conversation files are local sensitive data; protect the account and disk accordingly.
 
+## Encrypted Timechain backup and restore
+
+Open **Agent & Timechain → Backup & restore** in the installed ChainChat app. Select a Timechain, commit any pending conversation block, and enter a new passphrase of at least 12 characters. Save the `.ctbackup` file and keep its passphrase separately. The app derives an encryption key with scrypt and authenticates the archive with AES-256-GCM. If you lose the passphrase, ChainChat cannot recover the backup.
+
+To restore, choose the backup file and enter its passphrase. ChainChat authenticates the file, checks its native rings, registry commitments, and any witness quorum, then adds a separate copy to the agent list. Select the copy when you are ready to use it. Cancel or close the guide before registration to stop the operation. Files and passphrases go only to the installed app on loopback, and verification makes no model calls.
+
+The backup contains sealed history, blockspace attachments, supported faculty and learner registries, local witness configuration and attestations, and native lock and pause state. It carries authored `active_ops.py` as unapproved source. Model credentials, tool grants, operator approvals, unsealed conversation, and installation state are excluded. The guide handles up to 512 MiB of data, up to 50,000 files, individual rings up to 32 MiB, and individual files other than the ring ledger up to 64 MiB. Keep the encrypted file private, especially when the Timechain has witness signing keys. The installed app removes its private staging files when an operation ends. After an abrupt exit, it checks for and cleans up its abandoned workspaces on restart.
+
 ## Compatibility and limits
 
 The bundled `engine/proof-of-interaction` is the complete [Proof of Interaction engine](https://github.com/cyberphysicsai/proof-of-interaction), under its MIT license. The runtime uses `PoI.py`, `PoIGate`, `POI_DIMENSIONS`, `poi` scores, and `poi_verdict` records. Coherence, relevance, novelty, consistency, depth, covenant, brightness, policy thresholds, immune screening, recall, perspective collapse, Continuum, and growth retain their scoring and operational behavior.

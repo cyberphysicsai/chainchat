@@ -498,6 +498,9 @@
           ><button class="text-button" id="existingAgentButton">
             <svg><use href="#i-link" /></svg> Pair existing Timechain
           </button>
+          <button class="text-button" id="openTimechainBackup" type="button">
+            <svg><use href="#i-shield" /></svg> Backup &amp; restore
+          </button>
         </div>
         <div class="sidebar-section chain-section">
           <div class="section-caption">
@@ -877,6 +880,39 @@
           Verify & pair <span>↗</span>
         </button>
       </form>
+    </dialog>
+    <dialog id="timechainBackupDialog" class="modal compact-modal" aria-labelledby="timechainBackupTitle">
+      <div class="dialog-top">
+        <span class="eyebrow">TIMECHAIN / BACKUP &amp; RESTORE</span>
+        <button type="button" class="icon-button" data-close aria-label="Close dialog"><svg><use href="#i-close" /></svg></button>
+      </div>
+      <h2 id="timechainBackupTitle">Keep a private copy.</h2>
+      <p id="timechainBackupLocalNotice">Open the installed ChainChat app to create or restore a backup. This guide handles your file and passphrase locally.</p>
+      <div id="timechainBackupLocalControls" hidden>
+        <p>Backups contain verified rings, blockspace attachments, faculty registries, and any local witness keys. They exclude model credentials, tool grants, and installation settings. Save your passphrase separately. You’ll need it to restore.</p>
+        <details open>
+          <summary>Create an encrypted backup</summary>
+          <form id="timechainBackupForm" autocomplete="off">
+            <p id="timechainBackupAgent"></p>
+            <label class="field">Backup passphrase<input id="timechainBackupPassword" type="password" required minlength="12" maxlength="1024" autocomplete="off"></label>
+            <label class="field">Repeat passphrase<input id="timechainBackupConfirmation" type="password" required minlength="12" maxlength="1024" autocomplete="off"></label>
+            <p class="fine-print">Use at least 12 characters. Commit any pending conversation block before backing up. The guide supports up to 512 MiB of chain data.</p>
+            <button class="primary-button" type="submit">Verify &amp; save backup</button>
+          </form>
+        </details>
+        <details>
+          <summary>Restore an encrypted backup</summary>
+          <form id="timechainRestoreForm" autocomplete="off">
+            <label class="field">Encrypted backup file<input id="timechainRestoreFile" type="file" required accept=".ctbackup"></label>
+            <label class="field">Backup passphrase<input id="timechainRestorePassword" type="password" required maxlength="1024" autocomplete="off"></label>
+            <p class="fine-print">ChainChat verifies the file and adds a separate copy to your agent list.</p>
+            <button class="primary-button" type="submit">Verify &amp; restore a copy</button>
+          </form>
+        </details>
+        <button class="text-button" id="cancelTimechainBackup" type="button" hidden>Cancel operation</button>
+        <p id="timechainBackupStatus" class="fine-print" role="status"></p>
+        <p class="dialog-error" role="alert"></p>
+      </div>
     </dialog>
     <dialog id="clearLoadoutDialog" class="modal compact-modal">
       <form id="clearLoadoutForm">

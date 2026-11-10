@@ -2,6 +2,8 @@ import http from "node:http";
 import { isIP } from "node:net";
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs/promises";
+import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -59,6 +61,7 @@ import {NativeCompletions} from './lib/native-completions.mjs';
 import {NativeOwnerStore} from './lib/native-owner-store.mjs';
 import {NativeMediaStore} from './lib/native-media-store.mjs';
 import {setupReadiness} from './lib/setup-readiness.mjs';
+import { createTimechainBackups, MAX_TIMECHAIN_BACKUP } from './lib/timechain-backup.mjs';
 
 const appRoot = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(
@@ -394,6 +397,8 @@ export async function createApp(options = {}) {
   };
   const generateModel = options.generate || generate;
   const reviewModel = options.review || review;
+  const timechainBackups = await createTimechainBackups({ dataDir: store.root, ownerId: serviceOwner,
+    inspect: root => engine({ op: 'inspect', root, learning: false }) });
   let openclaw = null, poiBroker = null, automation = null, channelTransport = null, trustedPlugins = null, pluginTransport = null;
   const nativeOwners = new Map();
   const nativeRouteRevisions = new Map();
@@ -2329,6 +2334,60 @@ export async function createApp(options = {}) {
               operatorCompatibility: current.operatorCompatibility, capabilities: CAPABILITIES, state: current });
           }
           if (req.method !== "POST") throw err("Not found.", "NOT_FOUND", 404);
+          if (['/api/timechain/backup', '/api/timechain/restore'].includes(url.pathname)) {
+            if (session.origin !== `http://${req.headers.host}`)
+              throw err('Use the installed ChainChat app to back up or restore a Timechain.', 'BACKUP_LOCAL_REQUIRED', 403);
+            await requireLocalAccess();
+            const exporting = url.pathname.endsWith('/backup');
+            const record = exporting ? agentFor(session) : null;
+            const controller = new AbortController();
+            const cancel = () => { if (!res.writableEnded) controller.abort(); };
+            controller.agentRoot = record?.root;
+            req.once('aborted', cancel);
+            res.once('close', cancel);
+            session.controllers.add(controller);
+            requestSession.getStore().signal = controller.signal;
+            const authorize = async () => {
+              await requireLocalAccess();
+              if (record && session.agentId !== record.id)
+                throw err('The selected Timechain changed. Reopen the backup guide.', 'SESSION_CHANGED', 409);
+            };
+            try {
+              if (exporting) {
+                const input = await body(req, 4096);
+                if (input.agentId !== record.id || Object.keys(input).some(key => !['agentId', 'passphrase'].includes(key)))
+                  throw err('Reopen the backup guide for the selected Timechain.', 'BACKUP_AGENT_CHANGED', 409);
+                return await exclusive(record, async () => {
+                  if ((await store.pending(record)).exchanges?.length)
+                    throw err('Commit the pending conversation block before creating a backup.', 'BACKUP_PENDING_BLOCK', 409);
+                  return await timechainBackups.export({ root: record.root, passphrase: input.passphrase, signal: controller.signal, authorize,
+                    send: async (file, size) => {
+                      res.writeHead(200, { 'Content-Type': 'application/octet-stream',
+                        'Content-Disposition': 'attachment; filename="chainchat-timechain.ctbackup"', 'Content-Length': size });
+                      await pipeline(createReadStream(file), res, { signal: controller.signal });
+                    } });
+                });
+              }
+              if (req.headers['content-type'] !== 'application/octet-stream')
+                throw err('Choose a ChainChat backup file to restore.', 'CONTENT_TYPE', 415);
+              if (Number(req.headers['content-length']) > MAX_TIMECHAIN_BACKUP + 1026)
+                throw err('This backup exceeds the supported size limit.', 'BACKUP_TOO_LARGE', 413);
+              const restored = await timechainBackups.restore({ input: req, signal: controller.signal, authorize,
+                destinationId: randomUUID(), register: async (root, inspected) => {
+                  const record = await store.add(root, `${inspected.genesis.name || 'Timechain'} (restored)`, true, inspected.faculties, { authorize });
+                  return { id: record.id, name: record.name, head: inspected.head };
+                } });
+              return send(201, { restored });
+            } catch (error) {
+              if (res.headersSent) { res.destroy(); return; }
+              req.resume();
+              throw error;
+            } finally {
+              req.off('aborted', cancel);
+              res.off('close', cancel);
+              session.controllers.delete(controller);
+            }
+          }
           const input = await body(req, url.pathname === '/api/media/upload' ? 30 * 1024 * 1024
             : url.pathname.startsWith('/api/openclaw/skills/') ? 224 * 1024 : 16 * 1024 * 1024);
           emergency.assertAvailable(workEpoch);
@@ -2645,6 +2704,8 @@ export async function createApp(options = {}) {
               throw err(
                 "The bundled engine is a template. Create a new genesis instead.",
               );
+            if (timechainBackups.staging(root))
+              throw err('Wait until the Timechain restore has finished.', 'BACKUP_BUSY', 409);
             const inspected = await engine({ op: "inspect", root });
             if (!inspected.verified)
               throw err(

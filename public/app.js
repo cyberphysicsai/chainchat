@@ -26,6 +26,7 @@ import { createRuntimeHealthDisplay } from "./runtime-health.js";
 import { composerCommand, mountChatCommands } from "./chat-commands.js";
 import { mountAgentSkills } from "./agent-skills.js";
 import { mountEmergencyHalt } from "./emergency-halt.js";
+import { mountTimechainBackups } from "./timechain-backup.js";
 const $ = (id) => document.getElementById(id);
 const localBridgePage = isLocalBridgePage(location.origin);
 let selectedBridgePort = "8790";
@@ -2821,6 +2822,10 @@ emergencyHalt = mountEmergencyHalt({
     renderOperationControls();
   },
   onError: message => toast(message, true),
+});
+mountTimechainBackups({
+  document, local: localBridgePage, openDialog, requirePair, refreshState,
+  session: () => ({ token, agent: state.agent }),
 });
 nativeMediaComposer = mountNativeMediaComposer({ document, button: $("attachMedia"), input: $("nativeMediaFiles"), notice: $("nativeMediaNotice"), queueMount: $("nativeAttachmentQueue"), api,
   context: () => `${token}:${agentId()}:${state.provider?.provider}:${state.provider?.tier}:${state.provider?.model}`,
