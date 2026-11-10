@@ -96,6 +96,16 @@ Below the chat, **Audit selected Timechain** uses the already authenticated app 
 
 The UI, Gateway, native chain, registries and pending blocks run on the user's machine. Direct BYOK requests go to your chosen provider. Direct BYOK keys stay in ChainChat process memory and its private proxy. Native provider API keys use OpenClaw's private local credential store and can persist locally. Credentials never belong in public hosting, browser storage, transcripts or exported faculty packs. Model inference and review transmit the relevant context to the chosen service; they are not entirely local computation. Stopping the runtime clears process sessions, not persistent native authentication.
 
+## Finch switch
+
+In the installed app, select **Emergency halt** to stop chat and managed work across this installation. The supervisor blocks new requests and late replies, cancels managed runs, and shuts down the owned OpenClaw gateway and browser. The halt survives restart. Use **Re-arm & settings** and select **Verify and re-arm** to check the selected Timechain and mandatory Proof of Interaction runtime. Reconnect your model after re-arming.
+
+For remote halt, enroll an owner wallet and a public HTTPS JSON feed you control in **Halt settings**. Export the enrollment profile, open it on a wallet device using the [ChainChat wallet signer](https://cyphertempre.ai/emergency-halt-sign.html), and sign the command. Publish the signed JSON at your feed URL. The installed supervisor polls the feed while it is running. Each wallet-only command expires after 15 minutes, applies once to its enrolled installation, and moves no tokens. Export a fresh profile after re-arming or changing enrollment.
+
+To bind a halt to CPHY, also enroll a dedicated Base address you control. Use your wallet to transfer the exact CPHY token from the enrolled owner address to the dedicated address. When Base finalizes the transfer, enter its hash in the signer before publishing the signed command. The supervisor requires both the wallet signature and the exact finalized transfer. Ordinary payments and deposits have no effect. [Typed signing](https://eips.ethereum.org/EIPS/eip-712) · [Base finality](https://docs.base.org/specifications/transactions/transaction-finality)
+
+Completed tool actions and atomic chain writes can survive a halt. In-flight automation with uncertain effects is held for inspection. The switch controls work managed by this installation. External services and processes already detached from the owned process tree have their own controls.
+
 ## Local access
 
 Using ChainChat requires no token balance, payment or wallet signature. The installed launcher authenticates the local chat automatically; advanced website mode still requires its explicit local pairing code. Provider setup is available immediately after authentication. Chat requires a selected agent and connected provider, and active-chain output still passes the PoI review and native commitment policy.

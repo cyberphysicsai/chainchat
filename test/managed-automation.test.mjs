@@ -107,6 +107,31 @@ test('an ambiguous outgoing network result is held for inspection and never auto
   await recovered.wake(); assert.equal(attempts, 1);
 });
 
+test('Emergency Halt cancels a running occurrence and never replays its uncertain effects', async t => {
+  const began = Promise.withResolvers(), result = Promise.withResolvers();
+  let halted = false, attempts = 0;
+  const f = await fixture(t, { isHalted: () => halted, async executeTurn({ signal }) {
+    attempts++;
+    began.resolve(signal);
+    await result.promise;
+    return { approved: true, text: 'This reply must stay private.' };
+  } });
+  await f.coordinator.bindChannel(binding, channel);
+  await f.coordinator.acceptInbound(incoming());
+  const signal = await began.promise;
+  halted = true;
+  const stopped = f.coordinator.stopWork();
+  assert.equal(signal.aborted, true);
+  await assert.rejects(f.coordinator.acceptInbound(incoming('blocked')), { code: 'EMERGENCY_HALTED' });
+  result.resolve();
+  await stopped;
+  assert.equal((await f.coordinator.status('owner')).occurrences[0].status, 'uncertain');
+  halted = false;
+  await f.coordinator.wake();
+  assert.equal(attempts, 1);
+  assert.equal(f.deliveries.length, 0);
+});
+
 test('completed and failed delivery attempts retire any outstanding private authorization signal', async t => {
   for (const failed of [false, true]) {
     let authorizationSignal, deliverySignal;

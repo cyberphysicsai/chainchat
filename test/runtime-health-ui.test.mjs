@@ -26,7 +26,7 @@ function fixture() {
   };
   const context = vm.createContext({
     runtimeHealthDisplay: createRuntimeHealthDisplay(), state: {agent: {id: 'fixture-agent'}, settings: {}},
-    token: 'fixture-session', localBridgePage: true, selectedBridgePort: 8790,
+    token: 'fixture-session', localBridgePage: true, selectedBridgePort: 8790, emergencyHaltBlocksWork: false,
     location: {origin: 'http://127.0.0.1:8790'}, bridgeApiUrl: route => route,
     fetch: route => routes.get(route)(), $: node, setupWizard: {update() {updates++;}},
     cognition: () => ({mode: 'active'}), nativePanel: {syncConnection(value) {toolContext = value;}},

@@ -21,6 +21,7 @@
     <link rel="stylesheet" href="/setup-wizard.css" />
     <link rel="stylesheet" href="/chat-controls.css" />
     <link rel="stylesheet" href="/font-modes.css" />
+    <link rel="stylesheet" href="/emergency-halt.css" />
     <script type="module" src="/app.js"></script>
   </head>
   <body>
@@ -178,7 +179,12 @@
           <span id="learningIndicator">LEARNING —</span>
           <button class="text-button" id="quickCognition" type="button">Controls ↗</button>
           <button class="text-button hidden" id="cancelTurn" type="button">Stop current run ■</button>
+          <div class="emergency-halt-controls" id="emergencyHaltControls" hidden>
+            <button class="emergency-halt-button" id="emergencyHaltStop" type="button">Emergency halt</button>
+            <button class="text-button" id="emergencyHaltManage" type="button" aria-haspopup="dialog">Halt settings</button>
+          </div>
         </div>
+        <p id="emergencyHaltBanner" class="emergency-halt-banner" role="status" hidden></p>
         <p id="runtimeHealthNotice" class="runtime-health-notice hidden" role="status"></p>
         <div class="conversation-scroll" id="conversationScroll">
           <section class="welcome" id="welcome">
@@ -1384,6 +1390,47 @@
       <div id="lifecycleList" class="lifecycle-list"></div>
       <section id="lifecyclePreview" class="lifecycle-preview hidden"><strong id="lifecyclePreviewTitle"></strong><p id="lifecyclePreviewDescription"></p><button class="primary-button" id="confirmLifecycle" type="button">Confirm</button><button class="text-button" id="cancelLifecycle" type="button">Cancel</button></section>
       <div class="dialog-error" role="alert"></div>
+    </dialog>
+    <dialog id="emergencyHaltDialog" class="modal emergency-halt-dialog" aria-labelledby="emergencyHaltTitle">
+      <div class="dialog-top">
+        <span class="eyebrow">FINCH SWITCH</span>
+        <button type="button" class="icon-button" data-close aria-label="Close Emergency Halt settings"><svg><use href="#i-close" /></svg></button>
+      </div>
+      <h2 id="emergencyHaltTitle">Emergency Halt</h2>
+      <p id="emergencyHaltStatus" role="status"></p>
+      <p>Stop chat and managed work across this installation. The halt stays active after restart until you verify and re-arm. Actions already completed stay in effect.</p>
+      <div class="emergency-halt-actions">
+        <button type="button" class="emergency-halt-button" id="emergencyHaltDialogStop">Halt this installation</button>
+        <button type="button" class="primary-button" id="emergencyHaltRearm" hidden>Verify and re-arm</button>
+      </div>
+      <details>
+        <summary>Set up remote halt</summary>
+        <p class="fine-print">The local supervisor checks an HTTPS feed you control for a one-use command signed by your enrolled wallet. The wallet signature alone moves no tokens.</p>
+        <form id="emergencyHaltRemoteForm">
+          <label class="field" for="emergencyHaltWallet">Owner wallet address
+            <input id="emergencyHaltWallet" type="text" autocomplete="off" spellcheck="false" maxlength="42" required placeholder="0x…" />
+          </label>
+          <label class="field" for="emergencyHaltFeed">HTTPS feed URL
+            <input id="emergencyHaltFeed" type="url" autocomplete="off" spellcheck="false" maxlength="2048" required placeholder="https://your-host.example/chainchat-halt.json" />
+          </label>
+          <label class="field" for="emergencyHaltDestination">Dedicated CPHY halt destination on Base (optional)
+            <input id="emergencyHaltDestination" type="text" autocomplete="off" spellcheck="false" maxlength="42" placeholder="0x…" />
+          </label>
+          <p class="fine-print">For a CPHY signal, use a dedicated address you control. After a direct CPHY transfer from the enrolled wallet to that address finalizes on Base, sign a command containing its transaction hash. The Base token contract is <code id="emergencyHaltToken"></code>. Ordinary deposits and tips have no effect.</p>
+          <div class="emergency-halt-actions">
+            <button type="submit" class="primary-button">Save remote halt settings</button>
+            <button type="button" class="secondary-button" id="emergencyHaltDisableRemote" hidden>Disable remote halt</button>
+          </div>
+        </form>
+        <div id="emergencyHaltProfileControls" hidden>
+          <p class="fine-print">Download a fresh enrollment profile after changing settings or re-arming. Open it on a device with the enrolled wallet, sign a halt command, and publish the signed JSON to your feed.</p>
+          <div class="emergency-halt-actions">
+            <button type="button" class="secondary-button" id="emergencyHaltExport">Download enrollment profile</button>
+            <a class="text-button" href="/emergency-halt-sign.html" target="_blank" rel="noopener noreferrer">Wallet signer ↗</a>
+          </div>
+        </div>
+      </details>
+      <p id="emergencyHaltError" class="dialog-error" role="alert"></p>
     </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </body>

@@ -40,6 +40,8 @@ import { createAgentSkills } from "./lib/agent-skills.mjs";
 import { validateToolAuthority, SUPPORTED_HOST_TOOLS } from "./lib/tool-authority.mjs";
 import { readChainAudit } from "./lib/audit-snapshot.mjs";
 import { createManagedAutomation } from './lib/managed-automation.mjs';
+import { createEmergencyHalt } from './lib/emergency-halt.mjs';
+import { createEmergencySignalWatcher } from './lib/emergency-halt-signals.mjs';
 import { createChannelCredentialVault, createManagedChannelAccounts } from './lib/managed-channel-credentials.mjs';
 import { nativeChannelDelivery } from './openclaw/plugin/channels.mjs';
 import { createManagedBrowserService } from './lib/managed-browser-service.mjs';
@@ -297,9 +299,14 @@ export async function createApp(options = {}) {
   const store = await new StateStore(
     options.dataDir || process.env.CT_CHAT_DATA || path.join(appRoot, ".local"),
   ).load();
+  const engineWork = new Set();
+  let engineAbort = new AbortController(), haltWatcher, rearmVerify;
+  const emergency = await createEmergencyHalt({
+    directory: store.root, onTrip: stopOwnedWork, onRearm: rearmOwnedWork,
+  });
   const canonicalSkills = createCanonicalSkillManager({ dataDir: store.root, fetchImpl: options.canonicalFetch });
   const canonicalUpdates = options.canonicalUpdates === true;
-  await canonicalSkills.initialize({ refresh: canonicalUpdates });
+  await canonicalSkills.initialize({ refresh: canonicalUpdates && !emergency.blocked() });
   const toolPermissions = await new ToolPermissions(store.root).load();
   const agentSkills = createAgentSkills({ directory: path.join(store.root, 'agent-skills') });
   const nativeOwnerStore = await new NativeOwnerStore(store.root).load();
@@ -330,6 +337,7 @@ export async function createApp(options = {}) {
     now: options.sessionNow || Date.now });
   const requireLocalAccess = async () => {
     const current = requestSession.getStore();
+    emergency.assertAvailable(current?.haltEpoch);
     try { authority.assertCurrent(current); }
     catch (error) {
       if (error.code === "PAIR_REQUIRED" && current?.session) {
@@ -342,6 +350,8 @@ export async function createApp(options = {}) {
   };
   const runNativeEngine = options.engine || runEngine;
   const engine = async (request) => {
+    const scope = requestSession.getStore();
+    emergency.assertAvailable(scope?.haltEpoch);
     const selectedRecord = store.agents.find(agent => agent.root === request.root);
     if (selectedRecord && !cognitionFor(selectedRecord).learning) request = { ...request, learning: false };
     const mutating = ["init", "commit", "ingest", "pack_import", "dormancy", "faculty_action", "maintenance", "teach", "feedback"].includes(
@@ -365,14 +375,20 @@ export async function createApp(options = {}) {
     }[request.op];
     const trace = requestSession.getStore()?.trace;
     const action = async () => {
-      try { return await runNativeEngine(request, {mediaDirectory: mediaStore.root}); }
+      const signal = mutating && request.preview !== true ? undefined : engineAbort.signal;
+      const work = Promise.resolve().then(() => {
+        emergency.assertAvailable(scope?.haltEpoch);
+        return runNativeEngine(request, { mediaDirectory: mediaStore.root, signal });
+      });
+      engineWork.add(work);
+      try { return await work; }
       catch (error) {
         error.stage ||= errorStage(error, ({ prepare: 'chain-preparation', chat_prepare: 'chain-preparation', inspect: 'chain-preparation',
           verify: 'chain-preparation', evaluate: 'native-review', chat_evaluate: 'native-review', commit: 'commitment', ingest: 'commitment',
           route: 'memory-planning', memory: 'memory-planning', search: 'native-review',
           pack_import: 'loadout', faculty_action: 'loadout' })[request.op]);
         throw error;
-      }
+      } finally { engineWork.delete(work); }
     };
     return trace?.running && abilities ? trace.step(abilities, `Native ${request.op}`, action) : action();
   };
@@ -587,6 +603,7 @@ export async function createApp(options = {}) {
         await requireLocalAccess(); assertCredentialIsolation(config, result); assertServiceIsolation(result);
         return result;
       }, channelIngress: async request => {
+        emergency.assertAvailable();
         if (!automation) throw err('Managed channel ingress is not ready.', 'CHANNEL_HELD', 409);
         const { sessionKey: ignored, ...channel } = request.channel || {};
         return { allowed: true, ...await automation.acceptInbound(channel) };
@@ -598,7 +615,10 @@ export async function createApp(options = {}) {
       nativeCapabilities: identity => identity?.agentId ? toolPermissions.get(authorityKey(identity)).grant.nativeCapabilities : null,
       resolveNativeOwner, resolveNativeModelRoute,
       browserService, serviceEnvironment: () => ({ ...channelEnvironment }), serviceSecrets: () => [...serviceSecrets] });
-    try { await openclaw.start(); }
+    try {
+      if (emergency.blocked()) await openclaw.suspend?.();
+      else await openclaw.start();
+    }
     catch (error) { await poiBroker.close(); await openclaw.close().catch(() => {}); throw error; }
   }
   async function nativeControlIdentity(session, required = false) {
@@ -636,10 +656,11 @@ export async function createApp(options = {}) {
     recent.push(now);
     attempts.set(address, recent);
   }
-  function createBrowserSession(origin) {
+  function createBrowserSession(origin, localOwner = false) {
     const token = randomBytes(32).toString("hex");
     const paired = {
       origin,
+      localOwner,
       expires: Date.now() + 12 * 60 * 60 * 1000,
       provider: null,
       byokProvider: null,
@@ -669,7 +690,7 @@ export async function createApp(options = {}) {
     for (const [identity, lease] of automationOwners) if (lease.session === session) automationOwners.delete(identity);
     session.provider = null;
     if (!preserveByok) session.byokProvider = null;
-    void automation?.holdOwner(serviceOwner);
+    void automation?.holdOwner(serviceOwner).catch(() => {});
   };
   const expiry = setInterval(() => {
     const now = Date.now();
@@ -755,7 +776,8 @@ export async function createApp(options = {}) {
   // Read-only transport selection precedes actual native turn admission.
   // This grants no candidate, lease, child chain, context or action authority.
   async function resolveNativeModelRoute({ownerKey} = {}) {
-    if (!nativeOwnerReady || typeof ownerKey !== 'string' || !/^[A-Za-z0-9-]{1,100}:[a-f0-9]{64}$/.test(ownerKey)) return null;
+    if (!nativeOwnerReady || emergency.blocked() || typeof ownerKey !== 'string' || !/^[A-Za-z0-9-]{1,100}:[a-f0-9]{64}$/.test(ownerKey)) return null;
+    const haltEpoch = emergency.epoch();
     const split = ownerKey.lastIndexOf(':'), agentId = ownerKey.slice(0, split);
     const parent = store.agents.find(agent => agent.id === agentId);
     if (!parent) return null;
@@ -771,6 +793,7 @@ export async function createApp(options = {}) {
     if (!config || !liveOwner && config.provider !== 'native') return null;
     const identity = {agentId, genesisHash: ownerKey.slice(split + 1), record: parent};
     const assertRouteIdentity = () => {
+      emergency.assertAvailable(haltEpoch);
       if (!nativeOwnerReady || (nativeRouteRevisions.get(agentId) || 0) !== routeRevision ||
           !store.agents.some(agent => agent === parent && agent.root === parentRoot) ||
           toolPermissions.get(ownerKey).revision !== permissions.revision || cognitionFor(parent).mode === 'dormant')
@@ -803,7 +826,8 @@ export async function createApp(options = {}) {
   async function resolveNativeOwner(binding = {}) {
     // Only the private Gateway run registry calls this after correlating an
     // owner-created job or freshly reviewed spawn permit. HTTP input cannot.
-    if (!nativeOwnerReady) return null;
+    if (!nativeOwnerReady || emergency.blocked()) return null;
+    const haltEpoch = emergency.epoch();
     const {ownerKey, nativeSessionKey, kind} = binding;
     if (typeof ownerKey !== 'string' || !/^[A-Za-z0-9-]{1,100}:[a-f0-9]{64}$/.test(ownerKey) || /[\r\n]/.test(ownerKey) ||
         typeof nativeSessionKey !== 'string' || !nativeSessionKey || nativeSessionKey.length > 2048 || /[\0\r\n]/.test(nativeSessionKey) ||
@@ -833,10 +857,13 @@ export async function createApp(options = {}) {
       if (!selected) return null;
       config = nativeProviderConfig(selected);
     }
+    emergency.assertAvailable(haltEpoch);
     const lease = await canonicalSkills.acquire({refresh: options.canonicalUpdates === true, ttlMs: 15 * 60 * 1000});
+    try { emergency.assertAvailable(haltEpoch); }
+    catch (error) { lease.release(); throw error; }
     const token = createBrowserSession('native-owned'), session = sessions.get(token), controller = new AbortController();
     session.provider = config; session.agentId = parent.id; session.expires = Date.now() + 15 * 60 * 1000;
-    const scope = {session, token, epoch: authority.epoch(session), signal: controller.signal, operationRecord: parent,
+    const scope = {session, token, epoch: authority.epoch(session), haltEpoch, signal: controller.signal, operationRecord: parent,
       nativeIdentity: identity, nativeSessionKey, originalInput: String(binding.input || '').slice(0, 1000000)};
     const run = action => lease.run(() => requestSession.run(scope, action));
     let released = false, unlockParent = () => {}, nativeTrace = null, nativeTraceSettled = false;
@@ -1026,6 +1053,7 @@ export async function createApp(options = {}) {
       throw err("The Timechain is paused. Resume it before changing memory or faculties.", "CHAIN_DORMANT", 409);
   }
   async function exclusive(record, action, { control = false } = {}) {
+    emergency.assertAvailable(requestSession.getStore()?.haltEpoch);
     const identity =
       process.platform === "win32" ? record.root.toLowerCase() : record.root;
     if (busy.has(identity) || (!control && pausing.has(identity)))
@@ -1048,14 +1076,14 @@ export async function createApp(options = {}) {
       throw error;
     } finally {
       busy.delete(identity);
-      if (automation && !control) void automation.wake().catch(() => {});
+      if (automation && !control && !emergency.blocked()) void automation.wake().catch(() => {});
     }
   }
   async function state(session) {
     const record = requestSession.getStore()?.operationRecord || store.agents.find((a) => a.id === session.agentId);
     let inspected = null;
     let pending = { exchanges: [], bytes: 0 };
-    if (record) {
+    if (record && !emergency.blocked()) {
       inspected = await engine({ op: "inspect", root: record.root });
       await repairEquipment(record, inspected);
       pending = await store.pending(record);
@@ -1065,12 +1093,13 @@ export async function createApp(options = {}) {
         ? {
             ...inspected,
             id: record.id,
-            name: inspected.genesis?.name || record.name,
+            name: inspected?.genesis?.name || record.name,
             root: record.root,
           }
         : null,
       agents: store.agents.map((a) => ({ id: a.id, name: a.name })),
       executionRuntime: openclaw ? openclaw.status() : { backend: "direct" },
+      emergencyHalt: emergency.publicStatus(),
       canonicalSkill: canonicalSkills.describe(),
       nativeCompletions: record && inspected?.genesis?.hash ? nativeCompletions.list(record.id, inspected.genesis.hash) : {revision: '', rows: []},
       provider: cleanProvider(session.provider),
@@ -1353,9 +1382,9 @@ export async function createApp(options = {}) {
   function scheduleDream(record, height) {
     const current = requestSession.getStore();
     const settings = cognitionFor(record);
-    if (!current?.session || !settings.learning || !settings.autoDream ||
+    if (emergency.blocked() || !current?.session || !settings.learning || !settings.autoDream ||
         height - (record.lastDreamHeight || 0) < 100 || idleJobs.has(record.id)) return;
-    const context = { session: current.session, token: current.token, epoch: current.epoch };
+    const context = { session: current.session, token: current.token, epoch: current.epoch, haltEpoch: current.haltEpoch };
     const runWhenIdle = () => {
       const identity = process.platform === "win32" ? record.root.toLowerCase() : record.root;
       const latest = cognitionFor(record);
@@ -1807,6 +1836,8 @@ export async function createApp(options = {}) {
     }
   }
   async function inManagedContext(binding, callback, signal) {
+    const haltEpoch = emergency.epoch();
+    emergency.assertAvailable(haltEpoch);
     if (binding.ownerId !== serviceOwner) throw err('This local service belongs to another installation.', 'AUTOMATION_OWNER', 403);
     const record = store.agents.find(agent => agent.id === binding.agentId);
     if (!record) throw err('The scheduled Timechain is unavailable.', 'AGENT_REQUIRED', 409);
@@ -1815,7 +1846,7 @@ export async function createApp(options = {}) {
         !connectedProvider(lease.provider) || lease.session.provider !== lease.provider || authority.epoch(lease.session) !== lease.epoch)
       throw err('Resume this agent’s background work from a live local session with your chosen model.', 'PROVIDER_REQUIRED', 409);
     const { token, session, epoch } = lease;
-    return canonicalSkills.run(() => requestSession.run({ session, token, epoch, operationRecord: record, signal }, async () => {
+    return canonicalSkills.run(() => requestSession.run({ session, token, epoch, haltEpoch, operationRecord: record, signal }, async () => {
       checkCancelled(signal); await requireLocalAccess();
       const inspected = await engine({ op: 'inspect', root: record.root, learning: false });
       if (!inspected.verified || inspected.genesis?.hash !== binding.genesisHash) throw err('The bound genesis changed.', 'CHAIN_INVALID', 409);
@@ -1841,6 +1872,7 @@ export async function createApp(options = {}) {
       expectedHead: current.head.hash, genesisHash: current.genesis.hash, expiresAt: Date.now() + 60000 };
   }
   async function deliveryGate(request) {
+    emergency.assertAvailable();
     const channel = request.channel;
     if (!channel || !['payload', 'message'].includes(request.phase)) throw err('No delivery authorization.', 'CHANNEL_DELIVERY_HELD', 403);
     const claim = [...deliveryClaims.values()].find(item => !item.consumed && item.expiresAt > Date.now() &&
@@ -1878,11 +1910,12 @@ export async function createApp(options = {}) {
         return { ...permit, actionHash: action.actionHash };
       }, configureManagedServices: (_context, patch, options) => openclaw.configureManagedServices(patch, options),
       effectiveToolCatalogue: context => pluginTransport.request('tools.effective', { sessionKey: controlSessionKey(context.identity) }) });
-    await trustedPlugins.restoreTrustedConfiguration({ restoring: true });
+    if (!emergency.blocked()) await trustedPlugins.restoreTrustedConfiguration({ restoring: true });
   }
   if (openclaw?.automationRpc && openclaw?.registerNativeService) {
     channelTransport = openclaw.registerNativeService({ id: 'chainchat-channel-delivery', methods: {
       send(params) {
+        emergency.assertAvailable();
         const claim = [...deliveryClaims.values()].find(item => !item.consumed && item.expiresAt > Date.now() &&
           item.sessionKey === params.sessionKey && params.idempotencyKey === 'chainchat:' + item.occurrenceId);
         if (!claim) throw err('A private channel delivery permit is required.', 'CHANNEL_DELIVERY_HELD', 403);
@@ -1895,6 +1928,7 @@ export async function createApp(options = {}) {
     } });
     automation = await createManagedAutomation({ directory: path.join(store.root, 'managed-automation'),
       native: { nodePath: openclaw.nodePath, rpc: openclaw.automationRpc, subscribe: openclaw.subscribeAutomation },
+      isHalted: emergency.blocked,
       checkEligibility: binding => inManagedContext(binding, () => ({ eligible: true })),
       executeTurn: ({ binding, input, signal }) => inManagedContext(binding, ({ session, record }) => exclusive(record, async () => {
         const result = await performChatTurn({ session, record, input: { message: input }, externalSignal: signal, managed: true });
@@ -1912,6 +1946,7 @@ export async function createApp(options = {}) {
         return { allowed: true, permitId, sessionKey: nativeSession.sessionKey };
       }), signal),
       deliver: async ({ target, text, occurrenceId, authorization }) => {
+        emergency.assertAvailable();
         const claim = deliveryClaims.get(authorization?.permitId);
         if (!claim || claim.consumed || claim.expiresAt <= Date.now() || claim.signal?.aborted) return { delivered: false, uncertain: true };
         const envelope = nativeChannelDelivery({ target, text, occurrenceId, authorization });
@@ -1921,9 +1956,71 @@ export async function createApp(options = {}) {
         return { delivered: typeof result?.messageId === 'string' && !!result.messageId.trim(), native: result };
       }
     });
-    await automation.auditScheduler?.();
-    await openclaw.enableManagedAutomation();
-    void automation.reconcile().catch(() => {});
+    if (!emergency.blocked()) {
+      await automation.auditScheduler?.();
+      await openclaw.enableManagedAutomation();
+      void automation.reconcile().catch(() => {});
+    }
+  }
+  async function stopOwnedWork() {
+    nativeOwnerReady = false;
+    const nativeStop = openclaw?.suspend ? openclaw.suspend() : openclaw?.close();
+    engineAbort.abort();
+    rearmVerify?.abort();
+    for (const timer of idleJobs.values()) clearTimeout(timer);
+    idleJobs.clear();
+    for (const release of [...nativeTaskReleases]) release();
+    for (const session of sessions.values()) abortSession(session);
+    nativeOwners.clear();
+    nativeCatalogues.clear();
+    automationOwners.clear();
+    deliveryClaims.clear();
+    haltWatcher?.refresh();
+    const stopping = await Promise.allSettled([
+      nativeStop,
+      browserService?.stopAll(), browserBootstrap?.cancel(), automation?.stopWork(),
+      // A native atomic append may already be in progress. Let it settle
+      // while the operation's reply remains fenced by the halt epoch.
+      Promise.allSettled([...engineWork]),
+    ]);
+    if (stopping.some(result => result.status === 'rejected'))
+      throw err('An owned runtime did not confirm shutdown.', 'EMERGENCY_STOP_FAILED', 423);
+  }
+  async function rearmOwnedWork(assertRearmCurrent) {
+    if (busy.size || pausing.size || engineWork.size)
+      throw err('An interrupted operation is still settling. Wait, then try re-arming again.', 'EMERGENCY_BUSY', 409);
+    const record = store.agents.find(agent => agent.id === store.selectedAgentId);
+    if (record) {
+      const controller = rearmVerify = new AbortController();
+      try {
+        const verified = await canonicalSkills.run(() => runNativeEngine({
+          op: 'verify', root: record.root, learning: false,
+        }, { signal: controller.signal }), { refresh: false });
+        assertRearmCurrent();
+        if (verified.verified !== true) throw err('Verify the selected Timechain before re-arming.', 'CHAIN_INVALID', 422);
+      } finally { rearmVerify = null; }
+    }
+    if (openclaw) {
+      if (!openclaw.resume) throw err('This runtime cannot be safely re-armed.', 'EMERGENCY_REARM_UNAVAILABLE', 409);
+      assertRearmCurrent();
+      await openclaw.resume();
+      assertRearmCurrent();
+      await trustedPlugins?.restoreTrustedConfiguration({ restoring: true });
+      assertRearmCurrent();
+      if (automation) {
+        await automation.auditScheduler();
+        assertRearmCurrent();
+        await openclaw.enableManagedAutomation();
+        assertRearmCurrent();
+      }
+      const status = openclaw.status();
+      if (status.running !== true || status.enforcementHealthy !== true)
+        throw err('The mandatory Proof of Interaction runtime failed its health check.', 'EMERGENCY_REARM_HEALTH', 503);
+      await openclaw.resumeNativeSources?.();
+      assertRearmCurrent();
+    }
+    engineAbort = new AbortController();
+    nativeOwnerReady = true;
   }
   const server = http.createServer(async (req, res) => {
     const host = `127.0.0.1:${server.address()?.port}`;
@@ -1950,8 +2047,14 @@ export async function createApp(options = {}) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
     }
+    let workEpoch;
     const send = (status, value) => {
       if (res.destroyed || res.writableEnded) return;
+      if (workEpoch !== undefined && (emergency.blocked() || workEpoch !== emergency.epoch())) {
+        status = 423;
+        value = { error: 'Emergency Halt held this operation before delivery.', code: 'EMERGENCY_HALTED',
+          stage: 'runtime', emergencyHalt: emergency.publicStatus() };
+      }
       res.writeHead(status, {
         "Content-Type": "application/json; charset=utf-8",
       });
@@ -2038,6 +2141,7 @@ export async function createApp(options = {}) {
           version: APP_VERSION,
           service: "Cypher Tempre ChainChat",
           runtime: openclaw ? { backend: "openclaw", ...openclaw.status() } : { backend: "direct" },
+          emergencyHalt: emergency.publicStatus(),
         });
       if (req.method === "GET" && url.pathname === "/api/archetypes")
         return send(200, { archetypes });
@@ -2076,7 +2180,7 @@ export async function createApp(options = {}) {
             401,
           );
         if (launch) launchNonce = null;
-        const token = createBrowserSession(origin || `http://${req.headers.host}`);
+        const token = createBrowserSession(origin || `http://${req.headers.host}`, localBrowser);
         return send(200, { token, ...(launch && localBrowser ? { resumeTicket: rotateResume(token, sessions.get(token)) } : {}) });
       }
       const token = String(req.headers.authorization || "").replace(
@@ -2102,9 +2206,42 @@ export async function createApp(options = {}) {
           "SESSION_ORIGIN_REJECTED",
           403,
         );
+      if (url.pathname === '/api/emergency-halt' || url.pathname.startsWith('/api/emergency-halt/')) {
+        if (!session.localOwner || session.origin !== `http://${req.headers.host}` ||
+            req.method === 'POST' && !localBrowser)
+          throw err('Use the authenticated local ChainChat app for Emergency Halt controls.', 'LOCAL_ONLY', 403);
+        const scope = { session, token, epoch: authority.epoch(session) };
+        authority.assertCurrent(scope);
+        if (req.method === 'GET' && url.pathname === '/api/emergency-halt')
+          return send(200, emergency.ownerStatus());
+        if (req.method !== 'POST') throw err('Not found.', 'NOT_FOUND', 404);
+        const input = await body(req, 16384);
+        authority.assertCurrent(scope);
+        try {
+          if (url.pathname === '/api/emergency-halt/configure' && Object.keys(input).length === 1 && Object.hasOwn(input, 'config')) {
+            assertCredentialIsolation(session.provider || {}, input);
+            assertServiceIsolation(input);
+            return send(200, await emergency.configure(input.config));
+          }
+          if (Object.keys(input).length !== 1 || input.confirm !== true)
+            throw err('Confirm this local Emergency Halt action.');
+          if (url.pathname === '/api/emergency-halt/stop') return send(200, await emergency.trip('local'));
+          if (url.pathname === '/api/emergency-halt/rearm') {
+            const result = await emergency.rearm();
+            if (!result.halted) void automation?.reconcile().catch(() => {});
+            return send(200, result);
+          }
+          throw err('Not found.', 'NOT_FOUND', 404);
+        } finally { haltWatcher?.refresh(); }
+      }
+      if (emergency.blocked() && req.method === 'GET' && url.pathname === '/api/state')
+        return send(200, await state(session));
+      workEpoch = emergency.epoch();
+      emergency.assertAvailable(workEpoch);
       return await canonicalSkills.run(() => requestSession.run(
-        { session, token, epoch: authority.epoch(session) },
+        { session, token, epoch: authority.epoch(session), haltEpoch: workEpoch },
         async () => {
+          emergency.assertAvailable(workEpoch);
           if (req.method === 'GET' && url.pathname === '/api/models')
             return send(200, await describeModels(session));
           if (req.method === 'GET' && url.pathname === '/api/openclaw/provider') {
@@ -2194,6 +2331,7 @@ export async function createApp(options = {}) {
           if (req.method !== "POST") throw err("Not found.", "NOT_FOUND", 404);
           const input = await body(req, url.pathname === '/api/media/upload' ? 30 * 1024 * 1024
             : url.pathname.startsWith('/api/openclaw/skills/') ? 224 * 1024 : 16 * 1024 * 1024);
+          emergency.assertAvailable(workEpoch);
           if (['/api/openclaw/skills/import', '/api/openclaw/skills/select'].includes(url.pathname)) {
             if (session.origin !== `http://${req.headers.host}`)
               throw err('Manage additional skills in the local ChainChat app.', 'SKILL_LOCAL_REQUIRED', 403);
@@ -3206,6 +3344,7 @@ export async function createApp(options = {}) {
         error: message,
         code: error.code || "INTERNAL_ERROR",
         stage: errorStage(error),
+        ...(String(req.url).startsWith('/api/emergency-halt') ? { emergencyHalt: emergency.publicStatus() } : {}),
         ...(error.gate ? { gate: error.gate } : {}),
         ...(String(req.url).startsWith('/api/openclaw/plugins/') && nativePluginNotice(error.details)
           ? { pluginNotice: nativePluginNotice(error.details) } : {}),
@@ -3226,6 +3365,9 @@ export async function createApp(options = {}) {
   });
   let closingRuntime;
   const closeRuntime = () => closingRuntime ||= (async () => {
+    haltWatcher?.close();
+    rearmVerify?.abort();
+    engineAbort.abort();
     nativeOwnerReady = false;
     for (const release of [...nativeTaskReleases]) release();
     nativeOwners.clear(); nativeCatalogues.clear();
@@ -3235,9 +3377,13 @@ export async function createApp(options = {}) {
     await openclaw?.close(); await poiBroker?.close();
   })();
   server.once("close", () => { void closeRuntime(); });
-  nativeOwnerReady = true;
-  try { await openclaw?.resumeNativeSources?.(); }
+  nativeOwnerReady = !emergency.blocked();
+  try { if (nativeOwnerReady) await openclaw?.resumeNativeSources?.(); }
   catch (error) { nativeOwnerReady = false; await closeRuntime(); throw error; }
+  haltWatcher = createEmergencySignalWatcher({
+    ...options.emergencySignals, getState: emergency.signalState,
+    onHalt: proof => emergency.trip(proof.source, proof),
+  });
   return { server, pairingCode, store, sessions, openclaw, canonicalSkills, closeRuntime,
     issueLaunchNonce() { launchNonce = randomBytes(32).toString("hex"); launchExpiry = Date.now() + 60_000; return launchNonce; } };
 }

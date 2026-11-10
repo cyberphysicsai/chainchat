@@ -69,6 +69,9 @@ def main():
     removed_access_assets = ("holdings-wallet.js", "seat-wallet.js", "license-config.json", "seat-registry.json")
     if any((release / "public" / name).exists() for name in removed_access_assets):
         raise RuntimeError("The installed release still contains removed token-access assets.")
+    subprocess.run([active["node"], "--test", "--test-name-pattern", "EIP-712 owner halt",
+                    "test/emergency-halt-signals.test.mjs"], cwd=release, env=environment,
+                   timeout=30, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
 
     def engine(op, **fields):
         result = subprocess.run([active["python"], str(release / "engine_bridge.py")],

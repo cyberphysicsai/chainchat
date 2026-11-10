@@ -18,5 +18,8 @@
     "test": "node --test --test-concurrency=2 test/*.test.mjs",
     "test:engine": "python -m unittest discover -s test -p test_*.py"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
+  }
 }
