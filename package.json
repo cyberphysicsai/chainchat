@@ -1,12 +1,12 @@
 {
   "name": "cypher-tempre-chat",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Cypher Tempre ChainChat: bring-your-own-model chat with a local Timechain and Proof of Interaction.",
   "private": true,
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=24.22.1 <25 || >=26.12.1",
+    "node": ">=24.22.3 <25 || >=26.13.1",
     "python": ">=3.10"
   },
   "scripts": {

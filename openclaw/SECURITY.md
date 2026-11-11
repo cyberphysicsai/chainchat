@@ -16,7 +16,7 @@ not a sandbox boundary. Its messaging protocol deliberately forwards only fixed
 reads and never sends the model key or parent bearer into the frame.
 
 The original OpenClaw npm archive stays at the exact commitment in
-`upstream-lock.json` (OpenClaw 2026.11.2). The metadata compatibility overlay,
+`upstream-lock.json` (OpenClaw 2026.11.3). The metadata compatibility overlay,
 `early-hook-input-provenance-v2`, forwards
 only existing `inputProvenance: params.inputProvenance` and
 `currentSourceTurnId: params.currentSourceTurnId` into the embedded-agent and CLI
@@ -57,13 +57,15 @@ Residual embedded findings remain:
 - The external Minimatch override includes the
   [globparts amplification fix](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249).
   npm's bundled Minimatch 10.2.5 and Glob 13.0.6 have fixes in newer major
-  versions with different dependency trees. The November 9, 2026 npm audit of
-  the raw lock reported 33 moderate findings and zero high or critical findings.
+  versions with different dependency trees. The November 11, 2026 npm audit of
+  the raw lock reported 22 moderate findings and zero high or critical findings.
   The two directly affected audit paths were npm's bundled Minimatch and Glob.
   [Glob cancellation advisory](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4)
-- The portable Node pin remains 26.13.0, the current 26.x release checked on
-  November 9, 2026. The Node project announced a 26.x security release with a
-  high-severity fix for November 11. That fix was unpublished at review time.
+- The portable Node pin is 26.13.1, the security release published on November
+  10, 2026. All five platform archive hashes were checked against the detached
+  signature using the official Node release keyring at immutable commit
+  `481637f813e912c4aa3622d7964ab426c97b8e8d`; the signing fingerprint was
+  `5BE8A3F6C8A5C01D106C0AD820B1A390B168D356`.
   The Node distribution's separate bootstrap npm 11.20.0 bundles Undici 6.28.0
   and ip-address 10.5.0. Setup uses it for locked installs with lifecycle scripts
   disabled. The runtime lock audit does not cover this separate copy.

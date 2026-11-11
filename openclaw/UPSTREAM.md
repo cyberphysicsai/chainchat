@@ -26,7 +26,7 @@ in the same file. Setup refuses a different upstream version or damaged archive.
 Windows uses the official embeddable CPython 3.15.2 archive. macOS and Linux
 use Astral's CPython 3.15.2 standalone builds from its 20261026 release.
 
-`runtimeCompatibilityOverlays` records two exact groups for OpenClaw 2026.11.2.
+`runtimeCompatibilityOverlays` records two exact groups for OpenClaw 2026.11.3.
 `early-hook-input-provenance-v2` covers two early hook files.
 `api-key-channel-auth-v1` covers the shared raw `/login` dispatch, built-in
 command registry and native auth-status handler. The installer validates all

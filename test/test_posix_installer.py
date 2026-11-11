@@ -152,7 +152,7 @@ class PortableInstallerGuards(unittest.TestCase):
             for name in ('node', 'python'):
                 self.assertRegex(pair[name]['sha256'], r'^[a-f0-9]{64}$')
                 self.assertTrue(pair[name]['url'].startswith('https://'))
-        self.assertEqual({pair['node']['version'] for pair in pins.values()}, {'26.13.0'})
+        self.assertEqual({pair['node']['version'] for pair in pins.values()}, {'26.13.1'})
 
     def test_front_door_allows_slow_owned_readiness_but_holds_wrong_owner_and_early_exit(self):
         for scenario in ('slow-owned', 'migration-owned', 'wrong-owner', 'child-failed', 'reused-owner'):

@@ -29,7 +29,7 @@ function openPage(url) {
 }
 async function doctor() {
   const [major, minor, patch] = process.versions.node.split('.').map(Number);
-  if (!(major === 24 && (minor > 22 || minor === 22 && patch >= 1) || major >= 26 && (major > 26 || minor > 12 || minor === 12 && patch >= 1)))
+  if (!(major === 24 && (minor > 22 || minor === 22 && patch >= 3) || major >= 26 && (major > 26 || minor > 13 || minor === 13 && patch >= 1)))
     throw new Error('This edition requires the bundled Node runtime. Use the ChainChat installer or a supported OpenClaw Node version.');
   const upstream = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8'));
   if (upstream.name !== 'openclaw' || upstream.version !== lock.openclaw.version) throw new Error('The OpenClaw installation does not match the reviewed upstream pin.');
