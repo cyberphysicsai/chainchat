@@ -314,12 +314,28 @@ namespace CypherTempreInstaller {
       }
     }
     static Dictionary<string,string> EnvironmentFor(ActiveRelease release, string installRoot) {
-      return new Dictionary<string,string> { {"CT_CHAT_NODE", release.node}, {"CT_CHAT_PYTHON", release.python}, {"CT_CHAT_DATA", release.data},
+      Dictionary<string,string> projected=new Dictionary<string,string> { {"CT_CHAT_NODE", release.node}, {"CT_CHAT_PYTHON", release.python}, {"CT_CHAT_DATA", release.data},
         {"CT_OPERATOR_TRUST_ROOT", Path.Combine(release.data,"operator-approvals")},
         {"CT_OPENCLAW_MODULE", Path.Combine(release.release, "openclaw", "runtime", "node_modules", "openclaw")},
         {"PYTHONIOENCODING", "utf-8"}, {"PYTHONUTF8", "1"}, {"PYTHONDONTWRITEBYTECODE", "1"},
         {"npm_config_cache", Path.Combine(installRoot, "cache", "npm")}, {"npm_config_audit", "false"}, {"npm_config_fund", "false"},
         {"PATH", Path.GetDirectoryName(release.node) + ";" + Environment.GetEnvironmentVariable("PATH")} };
+      ProjectRuntimeOptions(projected,Environment.GetEnvironmentVariable("CT_CHAT_PORT"),Environment.GetEnvironmentVariable("CT_CHAT_NO_BROWSER"));
+      return projected;
+    }
+    static void ProjectRuntimeOptions(Dictionary<string,string> projected, string port, string noBrowser) {
+      // These owner launch preferences are the only inherited CT options.
+      // They are reprojected after the managed-child scrub, never passed through.
+      if(port != null) {
+        int number;
+        if(port.Length==0 || port.Any(c=>c<'0' || c>'9') || !Int32.TryParse(port,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out number) || number>65535)
+          throw new InvalidOperationException("CT_CHAT_PORT must be a decimal port from 0 to 65535.");
+        projected["CT_CHAT_PORT"]=number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+      }
+      if(noBrowser != null) {
+        if(noBrowser!="0" && noBrowser!="1") throw new InvalidOperationException("CT_CHAT_NO_BROWSER must be 0 or 1.");
+        projected["CT_CHAT_NO_BROWSER"]=noBrowser;
+      }
     }
     static string Quote(string value) {
       // Windows CommandLineToArgvW escaping, including trailing backslashes.
@@ -589,10 +605,16 @@ namespace CypherTempreInstaller {
         if(!File.Exists(Path.Combine(securedNode,"node.exe")) || !File.Exists(Path.Combine(securedNode,"npm.cmd")) || Directory.Exists(Path.Combine(securedNode,"node_modules","npm")))
           throw new Exception("Secured Node staging did not omit precisely its old npm tree.");
         ProcessStartInfo isolated=new ProcessStartInfo();
-        foreach(string name in new[]{"NODE_OPTIONS","NODE_PATH","PYTHONPATH","PYTHONINSPECT","OPENCLAW_CUSTOM","npm_config_userconfig","provider_API_KEY"}) isolated.EnvironmentVariables[name]="unreviewed parent value";
-        ApplyChildEnvironment(isolated,new Dictionary<string,string>{{"CT_CHAT_NODE","owned node"},{"NPM_CONFIG_REGISTRY","https://registry.npmjs.org"},{"PYTHONUTF8","1"}});
-        foreach(string name in new[]{"NODE_OPTIONS","NODE_PATH","PYTHONPATH","PYTHONINSPECT","OPENCLAW_CUSTOM","npm_config_userconfig","provider_API_KEY"}) if(isolated.EnvironmentVariables.ContainsKey(name)) throw new Exception("An inherited startup/configuration secret reached a managed child.");
+        foreach(string name in new[]{"NODE_OPTIONS","NODE_PATH","PYTHONPATH","PYTHONINSPECT","OPENCLAW_CUSTOM","CT_UNREVIEWED","CT_CHAT_PORT","CT_CHAT_NO_BROWSER","npm_config_userconfig","provider_API_KEY"}) isolated.EnvironmentVariables[name]="unreviewed parent value";
+        Dictionary<string,string> approved=new Dictionary<string,string>{{"CT_CHAT_NODE","owned node"},{"NPM_CONFIG_REGISTRY","https://registry.npmjs.org"},{"PYTHONUTF8","1"}};
+        ProjectRuntimeOptions(approved,"41023","1"); ApplyChildEnvironment(isolated,approved);
+        foreach(string name in new[]{"NODE_OPTIONS","NODE_PATH","PYTHONPATH","PYTHONINSPECT","OPENCLAW_CUSTOM","CT_UNREVIEWED","npm_config_userconfig","provider_API_KEY"}) if(isolated.EnvironmentVariables.ContainsKey(name)) throw new Exception("An inherited startup/configuration secret reached a managed child.");
         if(isolated.EnvironmentVariables["CT_CHAT_NODE"]!="owned node" || isolated.EnvironmentVariables["NPM_CONFIG_REGISTRY"]!="https://registry.npmjs.org" || isolated.EnvironmentVariables["PYTHONUTF8"]!="1") throw new Exception("The owned child projection was removed.");
+        if(isolated.EnvironmentVariables["CT_CHAT_PORT"]!="41023" || isolated.EnvironmentVariables["CT_CHAT_NO_BROWSER"]!="1") throw new Exception("The owner's safe port/browser preference was lost during scrubbing.");
+        foreach(string port in new[]{"0","65535","00080"}) {Dictionary<string,string> selected=new Dictionary<string,string>(); ProjectRuntimeOptions(selected,port,"0"); if(selected["CT_CHAT_PORT"]!=Int32.Parse(port).ToString() || selected["CT_CHAT_NO_BROWSER"]!="0") throw new Exception("A valid owner runtime preference was not preserved.");}
+        Dictionary<string,string> omitted=new Dictionary<string,string>(); ProjectRuntimeOptions(omitted,null,null); if(omitted.Count!=0) throw new Exception("Absent owner runtime preferences were invented.");
+        foreach(string port in new[]{"","-1","65536","1.5","+1"," 1","localhost:8790"}) {bool refused=false; try {ProjectRuntimeOptions(new Dictionary<string,string>(),port,null);} catch(InvalidOperationException) {refused=true;} if(!refused) throw new Exception("An invalid owner port was accepted.");}
+        foreach(string browser in new[]{"","2","false","yes"}) {bool refused=false; try {ProjectRuntimeOptions(new Dictionary<string,string>(),null,browser);} catch(InvalidOperationException) {refused=true;} if(!refused) throw new Exception("An invalid owner browser preference was accepted.");}
         string atomic=Path.Combine(root,"atomic.json"); AtomicJson(atomic,new {value=1}); AtomicJson(atomic,new {value=2});
         if(!File.ReadAllText(atomic).Contains("\"value\":2")) throw new Exception("Atomic state replacement failed.");
       } finally {
