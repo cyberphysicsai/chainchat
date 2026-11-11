@@ -57,7 +57,7 @@ They change executable code rather than relabeling versions:
   both interpreted and compiled schemas. Leading transforms, backward/skip-check
   behavior, nested issues and ordinary parsing keep the upstream semantics.
   Original version headers and license notices remain intact.
-- `npmSecurityOverlays` commits eight files inside npm 12.2.2. These backport the
+- `npmSecurityOverlays` commits ten files inside npm 12.2.2. These backport the
   [Glob abort fix](https://github.com/isaacs/node-glob/commit/4682e8c9babee1b385202ede36389634e12076d7),
   [Minimatch amplification bounds](https://github.com/isaacs/minimatch/commit/77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8)
   and allocation budgets, and the [literal-escaping fix](https://github.com/isaacs/minimatch/commit/784603e09641970d2ba2caf8c73a95d1015cc67d).
@@ -74,7 +74,7 @@ They change executable code rather than relabeling versions:
 - Installers do not extract or execute Node's original npm 11.20.0 subtree.
   Before the first dependency install, verified portable Python constructs a
   complete npm 12.2.2 tree from the official SHA-256/SRI-pinned archive, applies
-  the same eight-file backports and ip-address archive, and verifies it. The
+  the same ten-file backports and ip-address archive, and verifies it. The
   replacement has patched Undici 6.29.1 and ip-address 10.7.6. The original
   Node archive remains independently hash-verified; all non-npm files and links
   are checked against it. A new `npmSecurityProfile` identifies a separate Node

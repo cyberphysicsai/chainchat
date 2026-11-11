@@ -13,7 +13,7 @@ independent source commitment and compatibility tests.
 
 Two security backports have separate installed-file commitments:
 `runtimeSecurityOverlays` covers the 18 embedded Zod files, while
-`npmSecurityOverlays` covers eight files in npm's private dependency tree.
+`npmSecurityOverlays` covers ten files in npm's private dependency tree.
 The Glob default-entry shims use its same-version raw exports; its raw walker
 and standalone Minimatch retain the existing APIs with reviewed upstream fixes.
 Original archives, package version metadata and licenses remain available.

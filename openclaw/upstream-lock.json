@@ -219,6 +219,16 @@
           "path": "node_modules/minimatch/dist/esm/escape.js",
           "originalSha256": "8418e37c202bcd247e76b1c205d4eff9474f15fb76c1db1ef0688cb6a8ec3c94",
           "sha256": "d61cd0b8c7f8e06368320830bb80f12470a91e27e46c2dc2cbaa77c66390b79c"
+        },
+        {
+          "path": "node_modules/minimatch/dist/commonjs/unescape.js",
+          "originalSha256": "bec1bb4483a2c325599949dd6668b5b7daa2dcbe046c5a09899bc8c5b51c08c1",
+          "sha256": "e154e594eac01e4dd5cd2a60785b8c07974345634743f52df2b91b9687b8ed99"
+        },
+        {
+          "path": "node_modules/minimatch/dist/esm/unescape.js",
+          "originalSha256": "2cd61ba96e616969f152445c61ec2ca129a0afd2028ea71309b862a4222304d6",
+          "sha256": "685168109ac6f05b56ebda8fc6cc3744f3e791eb8ed2e5d9f7e0dbc9141803c6"
         }
       ]
     }
@@ -322,5 +332,5 @@
       ]
     }
   ],
-  "npmSecurityProfile": "11b35966e80a491a8c75d3a2234c6243d58727529ca07df7fb21328ca63e041d"
+  "npmSecurityProfile": "019721142e5945a95728a6b20325c62bf283a1fe929651004618d779984bc94b"
 }

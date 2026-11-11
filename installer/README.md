@@ -45,7 +45,7 @@ older npm subtree is never extracted. The secured npm and original verified Node
 files publish together under a security-profile-specific runtime directory;
 an older runtime directory is never modified. Repeat setup reconstructs and
 compares the complete secured npm tree before using it. Startup also checks
-all eight npm and 18 embedded Zod security patch hashes. See
+all ten npm and 18 embedded Zod security patch hashes. See
 [dependency remediation](../openclaw/SECURITY.md).
 
 The default location is `%LOCALAPPDATA%\CypherTempre\ChainChat`. Each application
