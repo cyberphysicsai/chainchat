@@ -6,6 +6,7 @@ accesses provider credentials. An available release is a review candidate.
 """
 import argparse
 import json
+import sys
 from pathlib import Path
 import urllib.request
 
@@ -13,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def local_state(root=ROOT):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from build_windows import security_fields
     pins = json.loads((root / "openclaw/upstream-lock.json").read_text(encoding="utf-8"))
     package = json.loads((root / "openclaw/runtime/package.json").read_text(encoding="utf-8"))
     lock = json.loads((root / "openclaw/runtime/package-lock.json").read_text(encoding="utf-8"))
@@ -25,9 +28,11 @@ def local_state(root=ROOT):
             lock.get("packages", {}).get("node_modules/" + name, {}).get("version") != version
             for name, version in overrides.items()):
         raise ValueError("OpenClaw dependency override manifest/lockfile/pin consistency check failed.")
+    security = security_fields(pins)
     return {"consistent": True, "pinnedVersion": expected["version"], "pinnedIntegrity": expected["integrity"],
             "dependencyOverrides": overrides, "bundledDependencyOverlays": pins.get('bundledDependencyOverlays', []),
-            "runtimeCompatibilityOverlays": pins.get('runtimeCompatibilityOverlays', []), "upstreamSourcePatched": bool(pins.get('runtimeCompatibilityOverlays')), "automaticInstall": False}
+            "runtimeCompatibilityOverlays": pins.get('runtimeCompatibilityOverlays', []), **security,
+            "upstreamSourcePatched": bool(pins.get('runtimeCompatibilityOverlays') or pins.get('runtimeSecurityOverlays')), "automaticInstall": False}
 
 
 def main():

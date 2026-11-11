@@ -31,7 +31,7 @@ skips usage probes in `models.authStatus` while preserving credential-status
 metadata. The installer checks all five exact original SHA-256 values before
 replacement, and doctor and Gateway require all five final hashes. The original
 npm SRI describes the downloaded archive. A separate dependency overlay selects external
-Undici 8.12.4, Zod 4.6.7, npm 12.2.2 and Minimatch 11.0.5. These are ordinary dependency overrides,
+Undici 8.12.4, Zod 4.6.7, npm 12.2.2 and Minimatch 11.0.8. These are ordinary dependency overrides,
 not edits to the upstream source tarball. The runtime lockfile, setup integrity
 checks and launcher doctor validate these selections. Adoption requires actual
 Gateway and installed-application regression tests. Automatic upstream update
@@ -48,28 +48,67 @@ attest the replacement separately.
 [ip-address advisory](https://github.com/beaugunderson/ip-address/security/advisories/GHSA-rxp7-6hxx-x8q5)
 [ip-address release changes](https://github.com/beaugunderson/ip-address/compare/v10.7.5...v10.7.6)
 
-Residual embedded findings remain:
+The managed installation also applies exact-hash upstream security backports.
+They change executable code rather than relabeling versions:
 
-- OpenClaw's compiled schema bundles contain Zod 4.6.5. The upstream collection
-  bounds fix checks limits before parsing elements; replacing the external Zod
-  npm package does not apply that fix to embedded code. See the
-  [upstream Zod fix](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd).
-- The external Minimatch override includes the
-  [globparts amplification fix](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249).
-  npm's bundled Minimatch 10.2.5 and Glob 13.0.6 have fixes in newer major
-  versions with different dependency trees. The November 11, 2026 npm audit of
-  the raw lock reported 22 moderate findings and zero high or critical findings.
-  The two directly affected audit paths were npm's bundled Minimatch and Glob.
-  [Glob cancellation advisory](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4)
-- The portable Node pin is 26.13.1, the security release published on November
-  10, 2026. All five platform archive hashes were checked against the detached
-  signature using the official Node release keyring at immutable commit
-  `481637f813e912c4aa3622d7964ab426c97b8e8d`; the signing fingerprint was
-  `5BE8A3F6C8A5C01D106C0AD820B1A390B168D356`.
-  The Node distribution's separate bootstrap npm 11.20.0 bundles Undici 6.28.0
-  and ip-address 10.5.0. Setup uses it for locked installs with lifecycle scripts
-  disabled. The runtime lock audit does not cover this separate copy.
-  [Node.js November security release notice](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases)
+- `runtimeSecurityOverlays` commits 18 OpenClaw/bundled-browser files containing
+  Zod 4.6.5. The [upstream collection-bounds fix](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd)
+  rejects oversized arrays, maps and sets before evaluating their children, in
+  both interpreted and compiled schemas. Leading transforms, backward/skip-check
+  behavior, nested issues and ordinary parsing keep the upstream semantics.
+  Original version headers and license notices remain intact.
+- `npmSecurityOverlays` commits eight files inside npm 12.2.2. These backport the
+  [Glob abort fix](https://github.com/isaacs/node-glob/commit/4682e8c9babee1b385202ede36389634e12076d7),
+  [Minimatch amplification bounds](https://github.com/isaacs/minimatch/commit/77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8)
+  and allocation budgets, and the [literal-escaping fix](https://github.com/isaacs/minimatch/commit/784603e09641970d2ba2caf8c73a95d1015cc67d).
+  Both CJS/ESM raw walkers are fixed. Glob's default minified entry points are
+  replaced with exact-hash forwarders to the same release's official raw
+  exports, removing their separate inline Minimatch/brace-expansion copies.
+  Export parity and actual npm install/pack behavior are tested. The standalone
+  Minimatch copies retain their existing npm-facing APIs. The
+  backports cover [Glob cancellation](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4),
+  [pattern amplification](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)
+  and [literal escaping](https://github.com/isaacs/minimatch/security/advisories/GHSA-c859-jr93-m5j4).
+  The external Minimatch override is 11.0.8, also addressing the
+  [11.x cache-weight issue](https://github.com/isaacs/minimatch/security/advisories/GHSA-hqmv-qgp3-jx75).
+- Installers do not extract or execute Node's original npm 11.20.0 subtree.
+  Before the first dependency install, verified portable Python constructs a
+  complete npm 12.2.2 tree from the official SHA-256/SRI-pinned archive, applies
+  the same eight-file backports and ip-address archive, and verifies it. The
+  replacement has patched Undici 6.29.1 and ip-address 10.7.6. The original
+  Node archive remains independently hash-verified; all non-npm files and links
+  are checked against it. A new `npmSecurityProfile` identifies a separate Node
+  directory. Existing runtime directories are verified or retained, never
+  overwritten with a new security profile. Repeat setup reconstructs the
+  expected npm tree from verified archives and compares every file, rather
+  than trusting a writable installation receipt.
+
+Launcher doctor and Gateway startup require all compatibility and security
+backport hashes. Gateway checks precede native Doctor/SDK execution. Unknown
+input bytes, incomplete commitments and changed output bytes hold startup.
+The tests exercise actual vulnerable and patched code, including bounded
+adversarial inputs; setup uses no package lifecycle scripts. CI and documented
+source installs also prepare the secured npm before invoking any npm command.
+
+The November 11, 2026 registry audit of the unmodified published lock metadata
+reports 22 moderate findings and zero high/critical findings, rooted in npm's
+bundled Glob/Minimatch closure. That metadata is deliberately preserved and
+still names the original versions; ordinary audit tools do not inspect these
+source backports. Those findings share the two bundled dependency roots. The exact backport
+commitments, installed file checks and behavior tests provide the separate
+remediation evidence for the attested installation. The two newly
+published Minimatch advisories above were also reviewed directly because they
+were not yet included in the registry's bulk advisory response. The application's
+direct dependency bulk check reported no advisories. This is a review of known
+findings, not proof that every dependency is free of vulnerabilities. Review
+new findings independently; do not suppress them based on an earlier patch.
+
+The portable Node pin is 26.13.1, the security release published on November
+10, 2026. All five platform archive hashes were checked against the detached
+signature using the official Node release keyring at immutable commit
+`481637f813e912c4aa3622d7964ab426c97b8e8d`; the signing fingerprint was
+`5BE8A3F6C8A5C01D106C0AD820B1A390B168D356`.
+[Node.js November security release notice](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases)
 
 The managed UI does not expose npm/package-manager tools. Host tools are
 default-denied and require explicit per-agent grants, scope validation and fresh
@@ -77,11 +116,9 @@ semantic/native admission before each invocation. Exploratory search branches
 and utility calls cannot use them. Gateway HTTP is authenticated and bound to numeric loopback; the UI never
 receives its operator token. ChainChat constructs Gateway message envelopes,
 limits them to 200 messages and sends no arbitrary browser-provided tool or
-configuration schemas. Browser chat input becomes message text. The reviewed
-HTTP schema uses unknown message/tool elements rather than the constrained
-collection route identified in the Zod fix. Review found no identified path from
-the current UI to that specific oversized-collection exploit. This is a scoped
-reachability assessment, not proof that every embedded schema is safe.
+configuration schemas. Browser chat input becomes message text. The embedded Zod backport also protects collection schemas outside that HTTP
+envelope; bounded UI input alone is not treated as a substitute for fixing
+the dependency.
 
 The provider proxy bounds responses, refuses redirects and strips transport
 encoding headers when forwarding decoded content. Provider credentials remain
@@ -94,9 +131,9 @@ Do not expose the Gateway or ChainChat HTTP ports publicly or treat arbitrary
 standalone OpenClaw plugins, channels, CLI commands or tools as covered by this
 configuration's tests. Extending those paths requires a fresh security review.
 Use `npm audit --omit=dev` in `openclaw/runtime` when reviewing updates, inspect
-embedded libraries as well as lockfile findings, and test a reviewed upstream
-release containing those fixes before removing the residual notices. An audit
-with zero lockfile findings would not itself prove embedded copies are fixed.
+embedded libraries as well as lockfile findings. Retain backports until a reviewed
+upstream release actually incorporates each fix in every relevant executable copy.
+An audit with zero lockfile findings would not itself prove embedded copies are fixed.
 
 
 ## Native controls and explicit local tools

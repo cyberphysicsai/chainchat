@@ -12,12 +12,26 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import subprocess
+import sys
 import tempfile
 import zipfile
 
 PRODUCT = Path(__file__).resolve().parents[1]
 MAX_ARCHIVE = 1024 * 1024 * 1024
 EXCLUDED_PARTS = {".git", ".local", "node_modules", "__pycache__", "chain", "tasks"}
+SECURITY_FIELDS = ('bootstrapNpm', 'npmSecurityProfile', 'npmSecurityOverlays', 'runtimeSecurityOverlays')
+
+
+def security_fields(pins):
+    # Import only this builder's reviewed local helpers, never code from a ZIP.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from bootstrap_npm import validate_lock
+    from npm_security import DESCRIPTOR as npm_descriptor
+    from zod_security_overlay import DESCRIPTOR as zod_descriptor
+    validate_lock(pins)
+    if pins.get('npmSecurityOverlays') != [npm_descriptor] or pins.get('runtimeSecurityOverlays') != [zod_descriptor]:
+        raise ValueError('The dependency security patches differ from their reviewed commitments.')
+    return {name: pins[name] for name in SECURITY_FIELDS}
 
 
 def inspect_payload(path: Path):
@@ -53,6 +67,8 @@ def inspect_payload(path: Path):
         required = ["server.mjs", "engine_bridge.py", "openclaw/launcher.mjs", "openclaw/upstream-lock.json",
                     "openclaw/runtime/package.json", "openclaw/runtime/package-lock.json",
                     "installer/windows-installer.cs", "installer/windows.manifest", "installer/security_overlays.py", "installer/runtime_compatibility.py", "openclaw/runtime-compatibility.mjs",
+                    "installer/bootstrap_npm.py", "installer/npm_security.py", "installer/zod_security_overlay.py",
+                    "openclaw/runtime-security.mjs", "openclaw/npm-security.mjs", "openclaw/zod-security.mjs",
                     "public/fonts/orbitron/Orbitron-Variable.ttf"]
         if any(prefix + name not in archive.namelist() for name in required):
             raise ValueError("The reviewed archive is missing the OpenClaw runtime/launcher/lockfiles.")
@@ -68,6 +84,7 @@ def inspect_payload(path: Path):
                 lock.get("packages", {}).get("node_modules/" + name, {}).get("version") != version
                 for name, version in overrides.items()):
             raise ValueError("The dependency overrides and lockfile do not match upstream-lock.json.")
+        security_fields(pins)
         return package, prefix, pins
 
 
@@ -84,6 +101,7 @@ def build(archive: Path, output: Path):
                 "dependencyOverrides": pins.get("dependencyOverrides", {}),
                 "bundledDependencyOverlays": pins.get("bundledDependencyOverlays", []),
                 "runtimeCompatibilityOverlays": pins.get("runtimeCompatibilityOverlays", []),
+                **security_fields(pins),
                 "node": pins["windowsX64"]["node"], "python": pins["windowsX64"]["python"]}
     compiler = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
     if not compiler.is_file():
@@ -117,6 +135,7 @@ def build(archive: Path, output: Path):
               "dependencyOverrides": manifest["dependencyOverrides"],
               "bundledDependencyOverlays": manifest["bundledDependencyOverlays"],
               "runtimeCompatibilityOverlays": manifest["runtimeCompatibilityOverlays"],
+              **{name: manifest[name] for name in SECURITY_FIELDS},
               "nodeVersion": manifest["node"]["version"], "pythonVersion": manifest["python"]["version"],
               "authenticodeSigned": False, "requiresAdministrator": False, "networkNeededForFirstInstall": True}
     output.with_suffix(output.suffix + ".json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

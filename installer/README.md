@@ -39,6 +39,15 @@ CPython runtimes from their official HTTPS distribution hosts. It uses locked
 Python installation, administrator access, registry setting, PATH change or
 Windows service is needed.
 
+Before either install, verified Python builds npm from the pinned official
+archive, applies the committed dependency fixes and verifies the result. Node's
+older npm subtree is never extracted. The secured npm and original verified Node
+files publish together under a security-profile-specific runtime directory;
+an older runtime directory is never modified. Repeat setup reconstructs and
+compares the complete secured npm tree before using it. Startup also checks
+all eight npm and 18 embedded Zod security patch hashes. See
+[dependency remediation](../openclaw/SECURITY.md).
+
 The default location is `%LOCALAPPDATA%\CypherTempre\ChainChat`. Each application
 release and its embedded Python are separate. `data/` holds persistent ChainChat
 state, OpenClaw state and local operator approval authority; selected existing

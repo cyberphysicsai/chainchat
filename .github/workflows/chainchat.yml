@@ -30,9 +30,13 @@ jobs:
           test "$(git -C "$reference" rev-parse FETCH_HEAD)" = "$canonical"
           test "$(git -C "$reference" rev-parse FETCH_HEAD:skills/openclaw/proof-of-interaction)" = "$expected"
           test "$(git rev-parse HEAD:engine/proof-of-interaction)" = "$expected"
+      - name: Prepare the verified secured npm before any dependency installation
+        run: |
+          python installer/bootstrap_npm.py prepare-npm --application . --cache "$RUNNER_TEMP/chainchat-security-overlays" --destination "$RUNNER_TEMP/chainchat-secured-npm" > "$RUNNER_TEMP/chainchat-secured-npm.json"
+          echo "CT_BOOTSTRAP_NPM_CLI=$(python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-secured-npm.json").read_text())["npmCli"])')" >> "$GITHUB_ENV"
       - name: Install exact OpenClaw pin and enable real runtime tests
         run: |
-          npm ci --ignore-scripts --prefix openclaw/runtime
+          node "$CT_BOOTSTRAP_NPM_CLI" ci --ignore-scripts --prefix openclaw/runtime
           python installer/security_overlays.py --application . --cache "$RUNNER_TEMP/chainchat-security-overlays"
           python installer/runtime_compatibility.py --application .
           python installer/check_upstream.py > "$RUNNER_TEMP/chainchat-upstream-check.json"
@@ -43,7 +47,7 @@ jobs:
       - name: Install previous runtime only for real upgrade acceptance
         run: |
           python -c 'import json; from pathlib import Path; root=Path("test/fixtures/previous-openclaw"); package=json.loads((root/"package.json").read_text()); lock=json.loads((root/"package-lock.json").read_text()); previous=lock["packages"]["node_modules/openclaw"]; assert package["dependencies"]["openclaw"]=="2026.10.9"; assert previous["version"]=="2026.10.9"; assert previous["resolved"]=="https://registry.npmjs.org/openclaw/-/openclaw-2026.10.9.tgz"; assert previous["integrity"]=="sha512-KbIl0/7an0/nKBo92FnJg7LFcEpFVQyOgSRfHNE9yxELg1Ebql7BmBsdLL+1dDOLZnQtuwjt6Hy45CCrmYdJNA=="'
-          npm ci --ignore-scripts --omit=dev --prefix test/fixtures/previous-openclaw
+          node "$CT_BOOTSTRAP_NPM_CLI" ci --ignore-scripts --omit=dev --prefix test/fixtures/previous-openclaw
           python -c 'import json,os; from pathlib import Path; root=Path("test/fixtures/previous-openclaw/node_modules/openclaw").resolve(); assert json.loads((root/"package.json").read_text())["version"]=="2026.10.9"; stream=open(os.environ["GITHUB_ENV"],"a",encoding="utf-8"); stream.write("CT_OPENCLAW_LEGACY_PACKAGE="+str(root)+"\n"); stream.close()'
       - name: Install the locked isolated browser for native action acceptance
         run: |
@@ -73,7 +77,7 @@ jobs:
           echo "installed=true" >> "$GITHUB_OUTPUT"
           sudo apparmor_parser -a "$profile"
       - name: Install and check application
-        run: npm ci --ignore-scripts && npm run check
+        run: node "$CT_BOOTSTRAP_NPM_CLI" ci --ignore-scripts && node "$CT_BOOTSTRAP_NPM_CLI" run check
       - name: Prepare the pinned independent earlier engine for compatibility tests
         shell: bash
         run: |
@@ -91,7 +95,7 @@ jobs:
           skill="$reference/skills/codex/cypher-tempre-self-model"
           printf 'CT_PARITY_REFERENCE=%s\nCT_ORIGINAL_SKILL=%s\n' "$skill" "$skill" >> "$GITHUB_ENV"
       - name: Run the complete Node suite with serial native runtime ownership
-        run: npm run test:engine && node --test --test-concurrency=1 test/*.test.mjs
+        run: python -m unittest discover -s test -p test_*.py && node --test --test-concurrency=1 test/*.test.mjs
       - name: Remove the temporary CI browser namespace exception
         if: always() && steps.browser_sandbox.outputs.installed == 'true'
         shell: bash
@@ -108,6 +112,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.15.2'
+      - name: Check secured bootstrap archive, hardlink and long-path guards
+        run: python -m unittest discover -s test -p test_bootstrap_npm.py
       - name: Build sanitized application and installer
         shell: pwsh
         run: |

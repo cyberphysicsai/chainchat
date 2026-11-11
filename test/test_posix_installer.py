@@ -59,6 +59,8 @@ class PortableInstallerGuards(unittest.TestCase):
             'installer/windows.manifest': b'<fixture/>', 'public/fonts/orbitron/Orbitron-Variable.ttf': b'fixture',
             'installer/posix_install.py': b'# only the reviewed archive copy\n',
             'installer/security_overlays.py': b'# reviewed security fixture\n',
+            **{name: b'# reviewed security fixture\n' for name in ('installer/bootstrap_npm.py', 'installer/npm_security.py', 'installer/zod_security_overlay.py')},
+            **{name: b'// reviewed security fixture\n' for name in ('openclaw/runtime-security.mjs', 'openclaw/npm-security.mjs', 'openclaw/zod-security.mjs')},
             'installer/runtime_compatibility.py': b'# reviewed compatibility fixture\n', 'openclaw/runtime-compatibility.mjs': b'// reviewed compatibility fixture\n',
             'installer/posix_bootstrap.sh': (ROOT / 'installer/posix_bootstrap.sh').read_bytes().replace(
                 b'# Generated setup', b'# REVIEWED_ARCHIVE_MARKER\n# Generated setup')}
