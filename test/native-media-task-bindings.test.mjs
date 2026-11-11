@@ -174,7 +174,7 @@ test('the actual pinned completion formatter plus exact native task receipt prod
   skip:!process.env.CT_OPENCLAW_PACKAGE?'Set the pinned OpenClaw package for actual formatter acceptance.':false,
 },async t=>{
   const packageRoot=process.env.CT_OPENCLAW_PACKAGE;
-  assert.equal(JSON.parse(await fs.readFile(path.join(packageRoot,'package.json'),'utf8')).version,'2026.11.2');
+  assert.equal(JSON.parse(await fs.readFile(path.join(packageRoot,'package.json'),'utf8')).version,'2026.11.3');
   const chunks=(await fs.readdir(path.join(packageRoot,'dist'))).filter(name=>/^internal-events-[\w-]+\.mjs$/u.test(name));
   assert.equal(chunks.length,1);
   // Test-only producer validation. No production code imports private chunks.

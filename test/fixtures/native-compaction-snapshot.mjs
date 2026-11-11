@@ -69,7 +69,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     assert.equal(sessionTarget.agentId, 'main'); assert.equal(sessionTarget.sessionKey, sessionKey); assert.equal(sessionTarget.sessionId, currentSessionId);
     const relative = path.relative(stateDir, path.resolve(sessionTarget.storePath));
     assert.ok(relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
-    assert.equal(JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).version, '2026.11.2');
+    assert.equal(JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).version, '2026.11.3');
     const { SessionManager, buildSessionContext } = await import(pathToFileURL(path.join(packageRoot, 'dist/plugin-sdk/agent-sessions.js')).href);
     const manager = await SessionManager.openAsync(sessionTarget, stateDir), branch = manager.getBranch(), messages = buildSessionContext(branch).messages;
     const persistedBoundary = snapshot.compactions.filter(entry => entry.sessionId === currentSessionId).at(-1);

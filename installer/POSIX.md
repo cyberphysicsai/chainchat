@@ -21,7 +21,7 @@ in the installer or terminal. `--no-launch` explicitly reports that startup has
 not been checked and points to the installed application shortcut.
 
 Both packages detect ARM64 or x64 and download exact SHA-256-pinned Node
-26.13.0 and portable CPython 3.15.2 runtimes. Python comes from the reviewed
+26.13.1 and portable CPython 3.15.2 runtimes. Python comes from the reviewed
 Astral python-build-standalone 20261026 release. No system Node/Python, Homebrew,
 pip package, sudo, system service or PATH modification is needed. Initial setup
 requires Internet access and curl or wget. Runtime licenses/notices remain in the

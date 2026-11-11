@@ -1,22 +1,22 @@
 {
   "format": 1,
   "openclaw": {
-    "version": "2026.11.2",
-    "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.11.2.tgz",
-    "integrity": "sha512-SgBml4WLp8V1DdAYkrTPLzVdA/iYo3iuHCtm4788GjaG83QZdd1VeOTlue0HBJGdn3SbFE06b6uPs+AM5ShMgg==",
+    "version": "2026.11.3",
+    "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.11.3.tgz",
+    "integrity": "sha512-FBq/q0TCaoA2b7qfdV0q81fHhI6RBB1zAQfJQREc1u2TlK5khVgCUsAlXskLWthyVqRz5PWEj+oOmfYgK58dHg==",
     "license": "MIT",
     "upstream": "https://github.com/openclaw/openclaw",
     "modifications": "Original npm archive retained. Installed runtime applies the exact early-hook-input-provenance-v2 metadata forwarding and api-key-channel-auth-v1 channel login and usage-probe overlays; other integration and enforcement remain in ChainChat.",
-    "release": "https://github.com/openclaw/openclaw/releases/tag/v2026.11.2",
-    "releaseCommit": "b556fdf457b026574bf0f1e7b4914b15f3f179ce"
+    "release": "https://github.com/openclaw/openclaw/releases/tag/v2026.11.3",
+    "releaseCommit": "847611dcaa3bf0e2783335f961dd1fd0580e4d9f"
   },
   "windowsX64": {
     "node": {
-      "version": "26.13.0",
-      "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-win-x64.zip",
-      "sha256": "dcc60d59a0746999f99064a01c020445d54d84228c691cdbf25b49ac3b59150a",
-      "checksumSource": "https://nodejs.org/dist/v26.13.0/SHASUMS256.txt",
-      "prefix": "node-v26.13.0-win-x64/"
+      "sha256": "e2edda75bfb089654705cf65a13b58933bfd5f57148e8ebda916f58a2474f1f7",
+      "checksumSource": "https://nodejs.org/dist/v26.13.1/SHASUMS256.txt",
+      "prefix": "node-v26.13.1-win-x64/",
+      "url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-win-x64.zip",
+      "version": "26.13.1"
     },
     "python": {
       "version": "3.15.2",
@@ -29,11 +29,11 @@
   "posix": {
     "darwin-arm64": {
       "node": {
-        "version": "26.13.0",
-        "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-darwin-arm64.tar.gz",
-        "sha256": "d38bd5e5a2ddce6bbb5ce45e46e208337da4d51fffe611e567fd32073d6439f6",
-        "prefix": "node-v26.13.0-darwin-arm64/",
-        "checksumSource": "https://nodejs.org/dist/v26.13.0/SHASUMS256.txt"
+        "sha256": "aec2514ea1ceb2ba52455e9ec65986f6749a06dd759e5db2a72e6889668c9735",
+        "checksumSource": "https://nodejs.org/dist/v26.13.1/SHASUMS256.txt",
+        "prefix": "node-v26.13.1-darwin-arm64/",
+        "url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-darwin-arm64.tar.gz",
+        "version": "26.13.1"
       },
       "python": {
         "version": "3.15.2",
@@ -46,11 +46,11 @@
     },
     "darwin-x64": {
       "node": {
-        "version": "26.13.0",
-        "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-darwin-x64.tar.gz",
-        "sha256": "525c9b29bb0263d687de60a4cec0e2a6db876a8eb032369e5795eca71e7c358e",
-        "prefix": "node-v26.13.0-darwin-x64/",
-        "checksumSource": "https://nodejs.org/dist/v26.13.0/SHASUMS256.txt"
+        "sha256": "82bb96078a24ca50b9c9a38f2379e6be6d87171fcd400fc14c8934b3bce96e2f",
+        "checksumSource": "https://nodejs.org/dist/v26.13.1/SHASUMS256.txt",
+        "prefix": "node-v26.13.1-darwin-x64/",
+        "url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-darwin-x64.tar.gz",
+        "version": "26.13.1"
       },
       "python": {
         "version": "3.15.2",
@@ -63,11 +63,11 @@
     },
     "linux-arm64": {
       "node": {
-        "version": "26.13.0",
-        "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-arm64.tar.gz",
-        "sha256": "439e9c438acdf6a6ffe47418da709153d66c4bed812e30a473faacb107dd2791",
-        "prefix": "node-v26.13.0-linux-arm64/",
-        "checksumSource": "https://nodejs.org/dist/v26.13.0/SHASUMS256.txt"
+        "sha256": "80a330b35415382878df18d41afbd106ea89bfb3be0087d6608e289a14c5cc7d",
+        "checksumSource": "https://nodejs.org/dist/v26.13.1/SHASUMS256.txt",
+        "prefix": "node-v26.13.1-linux-arm64/",
+        "url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-arm64.tar.gz",
+        "version": "26.13.1"
       },
       "python": {
         "version": "3.15.2",
@@ -80,11 +80,11 @@
     },
     "linux-x64": {
       "node": {
-        "version": "26.13.0",
-        "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.gz",
-        "sha256": "5848553868b402d3fabb5b09270649977780a390f832155721025a08b5104455",
-        "prefix": "node-v26.13.0-linux-x64/",
-        "checksumSource": "https://nodejs.org/dist/v26.13.0/SHASUMS256.txt"
+        "sha256": "518674de2b621728a5e4486f5fb3b7d2900bb3cc4aa97969edaa463db99f9778",
+        "checksumSource": "https://nodejs.org/dist/v26.13.1/SHASUMS256.txt",
+        "prefix": "node-v26.13.1-linux-x64/",
+        "url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-x64.tar.gz",
+        "version": "26.13.1"
       },
       "python": {
         "version": "3.15.2",
@@ -115,38 +115,38 @@
   "runtimeCompatibilityOverlays": [
     {
       "id": "early-hook-input-provenance-v2",
-      "upstreamVersion": "2026.11.2",
+      "upstreamVersion": "2026.11.3",
       "files": [
         {
-          "path": "dist/embedded-agent-BJe8xfTT.mjs",
-          "originalSha256": "706bfad11e48c09d2d35ddace2c61296e1689ca8e260eae561cbdcd43389276e",
-          "sha256": "0c85be2382d98a6038d0e01a04acc29bd655650414ff7152d74af99cba5853d8"
+          "path": "dist/embedded-agent-F7NpHcMm.mjs",
+          "originalSha256": "b5ceac9f43ddedf372fc994a4ded3a0b10ce79aeea8520316c7a08eb9cb07d78",
+          "sha256": "ca25bb54487aef08352019ccae8abba67cd6b1b0ecddf39a4626881d2eceef3b"
         },
         {
-          "path": "dist/cli-runner-Cz6SuvHJ.mjs",
-          "originalSha256": "7cc8f440202c6804672a46f28383c821cbb6c97151c70088e75529dda779c97a",
-          "sha256": "723fa26dd7717bb5ecdffa93745da5bc590153bdf9f672232459a6d728ccc109"
+          "path": "dist/cli-runner-DR6cu3XG.mjs",
+          "originalSha256": "93908e0144dd44781aa0bf66b0d984dd397232eb35d18bca3120d7ef899b13bc",
+          "sha256": "a7794c68daf999cdbf686a931f7707632fb9058f4721c1088bd4f7e361ea8a47"
         }
       ]
     },
     {
       "id": "api-key-channel-auth-v1",
-      "upstreamVersion": "2026.11.2",
+      "upstreamVersion": "2026.11.3",
       "files": [
         {
-          "path": "dist/provider-auth-login-flow-runtime-C2EOo219.mjs",
-          "originalSha256": "a38e4068297e840281f203a747ced7d8955f4b8e1c1a855377252ad4b3e0b58e",
-          "sha256": "ca23bce2f5b4e88bf7de2f6c01ce0b3c947ade30453e1df925fea5d2895e87c4"
+          "path": "dist/provider-auth-login-flow-runtime-B18ky3JD.mjs",
+          "originalSha256": "9fe0edd695bbcc8bcee55f3e62d532251ca51ccdc9737b3f39a979aa31826085",
+          "sha256": "de9f6aac48d84f1754fdd6fda69802d0d6ef0908b2c053db61bcf21a6a92acab"
         },
         {
-          "path": "dist/commands-registry.data-DP7hJyYX.mjs",
-          "originalSha256": "09b10d0b8b4068ab957da2a4820be85e086ae3a23c50b81b85518a2b324104cd",
-          "sha256": "f780135f2b79706b59931c7f6e81019e626ab61c35bf6bcd0537138a29c01c1e"
+          "path": "dist/commands-registry.data-B0OqwBdv.mjs",
+          "originalSha256": "425b577731f45a7c7cf5bf213af873e21f34b1992196735e44b8fa64a34b0c98",
+          "sha256": "10fd5e8c4b8b6d90670a98e6c4d8a7d4c6d737fafac933fa91b9366e133e357c"
         },
         {
-          "path": "dist/models-auth-status-BJezSSIf.mjs",
-          "originalSha256": "12aa60af31a29c8a59c69e7f4638c52a1097a8133e1669cf638a8e7e290ea3e0",
-          "sha256": "41ed7c57bec3a729d7a447642de2f5a998511d0e0fa78f8c34c1913b9caefeca"
+          "path": "dist/models-auth-status-DnznMCDh.mjs",
+          "originalSha256": "05bbabd1db046df80dcc16d3918d829b9410f1fe24fcba69b28c41ce2122ce8f",
+          "sha256": "87bcad538cf9378e739c92a2c48107c9a6813b1c89e1c5aafd39549fd55b4662"
         }
       ]
     }
