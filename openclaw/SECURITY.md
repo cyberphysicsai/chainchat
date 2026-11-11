@@ -51,8 +51,8 @@ attest the replacement separately.
 The managed installation also applies exact-hash upstream security backports.
 They change executable code rather than relabeling versions:
 
-- `runtimeSecurityOverlays` commits 18 OpenClaw/bundled-browser files containing
-  Zod 4.6.5. The [upstream collection-bounds fix](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd)
+- `runtimeSecurityOverlays` commits 18 files covering OpenClaw's embedded Zod
+  4.6.5 and the browser tool's embedded Zod 4.6.2. The [upstream collection-bounds fix](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd)
   rejects oversized arrays, maps and sets before evaluating their children, in
   both interpreted and compiled schemas. Leading transforms, backward/skip-check
   behavior, nested issues and ordinary parsing keep the upstream semantics.
