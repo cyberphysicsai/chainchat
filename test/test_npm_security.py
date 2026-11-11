@@ -22,6 +22,18 @@ def installed_npm():
 
 
 class NpmSecurityTests(unittest.TestCase):
+    def test_complete_companion_file_group_is_committed(self):
+        paths = [row['path'] for row in overlay.DESCRIPTOR['files']]
+        expected = {
+            f'node_modules/{package}/dist/{flavor}/{filename}'
+            for package, filenames in [('glob', ['walker.js', 'index.min.js']),
+                                       ('minimatch', ['index.js', 'escape.js', 'unescape.js'])]
+            for flavor in ['commonjs', 'esm']
+            for filename in filenames
+        }
+        self.assertEqual(len(paths), 10)
+        self.assertEqual(set(paths), expected)
+
     def test_unknown_commitments_hold_before_package_reads(self):
         for change in ({'id': 'unknown'}, {'files': []}, {'advisories': []}):
             descriptor = {**copy.deepcopy(overlay.DESCRIPTOR), **change}

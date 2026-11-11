@@ -29,6 +29,19 @@ async function temporary(t) {
 }
 
 const portionMatches = (part, name) => typeof part === 'string' ? part === name : part.test(name);
+const roundTripCases = ['', 'literal.txt', '!secret.txt', '#notes.md', '!!bang', '!#mixed',
+  '@(!)literal', '!@(!)literal', 'x{a,b}', 'x\\*', 'a[b]c', '*(x)', 'slash/name'];
+function assertEscapeRoundTrips(api) {
+  for (const windowsPathsNoEscape of [false, true]) {
+    for (const magicalBraces of [false, true]) {
+      const options = {windowsPathsNoEscape, magicalBraces};
+      for (const literal of roundTripCases) {
+        assert.equal(api.unescape(api.escape(literal, options), options), literal,
+          `escape/unescape did not roundtrip ${JSON.stringify({literal, options})}`);
+      }
+    }
+  }
+}
 
 test('npm security commitment refuses an unknown descriptor before file access', async () => {
   await assert.rejects(assertNpmSecurity('/not-a-package', {}), /commitment differs/);
@@ -42,7 +55,7 @@ test('npm security file group is independently committed in the runtime lock', a
   assert.deepEqual(lock.npmSecurityOverlays, [NPM_SECURITY_DESCRIPTOR]);
 });
 
-test('actual npm validates all eight installed backport files', {skip}, async () => {
+test('actual npm validates all ten installed backport files', {skip}, async () => {
   assert.deepEqual(await assertNpmSecurity(npmRoot, NPM_SECURITY_DESCRIPTOR), NPM_SECURITY_DESCRIPTOR);
 });
 
@@ -51,6 +64,7 @@ test('standalone CJS and ESM matchers bound growth before allocation and preserv
   const modules = [require('minimatch'),
     await import(pathToFileURL(path.join(npmRoot, 'node_modules/minimatch/dist/esm/index.js')))];
   for (const mm of modules) {
+    assertEscapeRoundTrips(mm);
     const pattern = Array(4).fill('**/../a/b').join('/');
     assert.throws(() => new mm.Minimatch(pattern, {optimizationLevel: 2, braceExpandMax: 4}),
       /too many patterns/);
@@ -105,6 +119,7 @@ test('default and raw CJS/ESM glob copies stop filesystem work after cancellatio
       'stream', 'streamSync', 'sync', 'unescape'].sort();
     for (const module of modules) assert.deepEqual(Object.keys(module).sort(), expectedExports);
     for (const glob of modules) {
+      assertEscapeRoundTrips(glob);
       const ac = new AbortController();
       const reason = new Error('fixture abort');
       let calls = 0;
@@ -183,6 +198,7 @@ test('external Minimatch uses the latest escaping fix', {
   const require = createRequire(path.join(process.env.CT_OPENCLAW_PACKAGE, 'package.json'));
   assert.equal(require('minimatch/package.json').version, '11.0.8');
   const mm = require('minimatch');
+  assertEscapeRoundTrips(mm);
   for (const windowsPathsNoEscape of [false, true]) {
     const options = {windowsPathsNoEscape, magicalBraces: true};
     for (const literal of ['!secret.txt', '#notes.md', 'x{a,b}']) {

@@ -71,6 +71,16 @@ export const NPM_SECURITY_DESCRIPTOR = freeze({
       "path": "node_modules/minimatch/dist/esm/escape.js",
       "originalSha256": "8418e37c202bcd247e76b1c205d4eff9474f15fb76c1db1ef0688cb6a8ec3c94",
       "sha256": "d61cd0b8c7f8e06368320830bb80f12470a91e27e46c2dc2cbaa77c66390b79c"
+    },
+    {
+      "path": "node_modules/minimatch/dist/commonjs/unescape.js",
+      "originalSha256": "bec1bb4483a2c325599949dd6668b5b7daa2dcbe046c5a09899bc8c5b51c08c1",
+      "sha256": "e154e594eac01e4dd5cd2a60785b8c07974345634743f52df2b91b9687b8ed99"
+    },
+    {
+      "path": "node_modules/minimatch/dist/esm/unescape.js",
+      "originalSha256": "2cd61ba96e616969f152445c61ec2ca129a0afd2028ea71309b862a4222304d6",
+      "sha256": "685168109ac6f05b56ebda8fc6cc3744f3e791eb8ed2e5d9f7e0dbc9141803c6"
     }
   ]
 });
@@ -89,7 +99,7 @@ async function file(root, relative, limit = 2 * 1024 * 1024) {
   return fs.readFile(filename);
 }
 export async function assertNpmSecurity(npmRoot, descriptor) {
-  if (canonical(descriptor) !== canonical(NPM_SECURITY_DESCRIPTOR))
+  if (NPM_SECURITY_DESCRIPTOR.files.length !== 10 || canonical(descriptor) !== canonical(NPM_SECURITY_DESCRIPTOR))
     throw new Error('The npm security commitment differs from the reviewed backport.');
   const root = path.resolve(npmRoot);
   const info = await fs.lstat(root);

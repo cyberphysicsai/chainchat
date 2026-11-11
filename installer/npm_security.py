@@ -62,6 +62,16 @@ FILES = [
         "path": "node_modules/minimatch/dist/esm/escape.js",
         "originalSha256": "8418e37c202bcd247e76b1c205d4eff9474f15fb76c1db1ef0688cb6a8ec3c94",
         "sha256": "d61cd0b8c7f8e06368320830bb80f12470a91e27e46c2dc2cbaa77c66390b79c"
+    },
+    {
+        "path": "node_modules/minimatch/dist/commonjs/unescape.js",
+        "originalSha256": "bec1bb4483a2c325599949dd6668b5b7daa2dcbe046c5a09899bc8c5b51c08c1",
+        "sha256": "e154e594eac01e4dd5cd2a60785b8c07974345634743f52df2b91b9687b8ed99"
+    },
+    {
+        "path": "node_modules/minimatch/dist/esm/unescape.js",
+        "originalSha256": "2cd61ba96e616969f152445c61ec2ca129a0afd2028ea71309b862a4222304d6",
+        "sha256": "685168109ac6f05b56ebda8fc6cc3744f3e791eb8ed2e5d9f7e0dbc9141803c6"
     }
 ]
 DESCRIPTOR = {
@@ -113,6 +123,14 @@ def _transform(relative, content):
     if (c === '!') return (windowsPathsNoEscape ? '@(!)' : '\\!') + e.slice(1);
     return e;'''
         text = _replace(text, before, after)
+    elif relative.startswith('node_modules/minimatch/') and relative.endswith('/unescape.js'):
+        recurse = '(0, exports.unescape)' if '/commonjs/' in relative else 'unescape'
+        text = _replace(text, '    if (magicalBraces) {',
+                        "    // Companion to escape()'s leading ! encoding in Windows mode.\n"
+                        "    if (windowsPathsNoEscape && s.startsWith('@(!)')) {\n"
+                        f"        return '!' + {recurse}(s.slice(4), {{ windowsPathsNoEscape, magicalBraces }});\n"
+                        '    }\n'
+                        '    if (magicalBraces) {')
     elif relative.startswith('node_modules/minimatch/') and relative.endswith('/index.js'):
         text = _replace(text, '    firstPhasePreProcess(globParts) {\n        let didSomething = false;',
                         '    firstPhasePreProcess(globParts) {\n'
@@ -173,7 +191,7 @@ def _safe_file(root, relative, limit=2 * 1024 * 1024):
 
 
 def _validate(descriptor):
-    if descriptor != DESCRIPTOR or len(DESCRIPTOR['files']) != 8:
+    if descriptor != DESCRIPTOR or len(DESCRIPTOR['files']) != 10:
         raise ValueError('The npm security commitment differs from the reviewed backport.')
 
 
