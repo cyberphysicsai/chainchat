@@ -121,7 +121,7 @@ def archive_parts(name):
     return parts
 
 
-def extract_runtime(archive, directory):
+def extract_runtime(archive, directory, excluded_prefix=None):
     """Extract only hash-verified runtime tarballs, with internal links bounded."""
     directory.mkdir(parents=True, exist_ok=False)
     with tarfile.open(archive, 'r:gz') as packed:
@@ -144,7 +144,11 @@ def extract_runtime(archive, directory):
                 target = (base / entry.linkname).resolve()
                 if not target.is_relative_to(directory.resolve()):
                     raise ValueError('Runtime archive link escaped its root.')
-        packed.extractall(directory, filter='data')
+        # The original Node npm tree is omitted only in a new secured-runtime
+        # staging directory. Its replacement is verified before activation.
+        selected = entries if excluded_prefix is None else [entry for entry in entries
+            if entry.name.rstrip('/') != excluded_prefix and not entry.name.startswith(excluded_prefix + '/')]
+        packed.extractall(directory, members=selected, filter='data')
 
 
 def extract_source(archive, directory, prefix):
@@ -192,6 +196,38 @@ def verify_source(directory, expected):
             raise ValueError('An immutable application release was modified; it was not activated.')
 
 
+def verify_python_copy(reference, installed):
+    """Attest a cached interpreter before executing it, using fresh setup bytes."""
+    raw_installed = Path(installed).absolute()
+    reference, installed = Path(reference).resolve(strict=True), raw_installed.resolve(strict=True)
+    if raw_installed != installed or raw_installed.is_symlink():
+        raise ValueError('The cached Python root cannot contain links or aliases.')
+    if not reference.is_dir() or not installed.is_dir():
+        raise ValueError('The verified Python runtime is unavailable.')
+
+    def tree(root, cached=False):
+        result = {}
+        for filename in root.rglob('*'):
+            relative = filename.relative_to(root).as_posix()
+            if filename.is_symlink():
+                if not filename.resolve().is_relative_to(root):
+                    raise ValueError('The Python runtime contains an external link.')
+                result[relative] = ('link', os.readlink(filename))
+            elif filename.is_file():
+                mode = filename.stat().st_mode
+                if mode & 0o6000 or cached and filename.stat().st_nlink != 1:
+                    raise ValueError('The cached Python runtime has unsafe ownership links or modes.')
+                result[relative] = ('file', sha256(filename), mode & 0o111)
+            elif filename.is_dir():
+                result[relative] = ('directory',)
+            else:
+                raise ValueError('The Python runtime contains an unsupported entry.')
+        return result
+
+    if tree(installed, cached=True) != tree(reference):
+        raise ValueError('The cached Python runtime differs from the freshly verified setup archive.')
+
+
 def fetch_archive(pin, cache):
     parsed = urllib.parse.urlsplit(pin['url'])
     if parsed.scheme != 'https' or parsed.hostname not in {'nodejs.org', 'github.com'}:
@@ -226,7 +262,8 @@ def environment(active):
         if not re.search(r'KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL', key, re.I)
         and not re.match(r'OPENCLAW_|CHAINCHAT_|CT_|OTEL_|SENTRY_', key, re.I)
         and (not key.lower().startswith('npm_config_') or key in {'NPM_CONFIG_USERCONFIG', 'NPM_CONFIG_GLOBALCONFIG', 'NPM_CONFIG_REGISTRY', 'NPM_CONFIG_CACHE'})
-        and key not in {'NODE_OPTIONS', 'NODE_PATH', 'PYTHONPATH', 'PYTHONHOME'}}
+        and key not in {'NODE_OPTIONS', 'NODE_PATH', '__PYVENV_LAUNCHER__'}
+        and not key.upper().startswith('PYTHON')}
     allowed.update(CT_CHAT_DATA=active['data'], CT_CHAT_PYTHON=active['python'],
         CT_OPENCLAW_MODULE=str(Path(active['release']) / 'openclaw/runtime/node_modules/openclaw'),
         CT_OPERATOR_TRUST_ROOT=str(Path(active['data']) / 'operator-approvals'),
@@ -354,22 +391,22 @@ def install(args):
         if sha256(payload) != manifest['payloadSha256']:
             raise ValueError('Bundled application integrity verification failed.')
         pins = manifest['runtimes'][key]
-        python_home = runtimes / ('python-' + pins['python']['version'] + '-' + key + '-' + pins['python']['sha256'][:12])
+        # The new verification policy has its own directory. An older release's
+        # shared interpreter and bytecode cache are never repaired or replaced.
+        python_home = runtimes / ('python-' + pins['python']['version'] + '-' + key + '-'
+            + pins['python']['sha256'][:12] + '-verified-v1')
         beneath(root, python_home)
         if not python_home.exists():
             temporary = runtimes / ('.python-' + uuid.uuid4().hex)
             shutil.copytree(args.bootstrap_python.resolve(), temporary, symlinks=True)
             os.replace(temporary, python_home)
-        node_home = runtimes / ('node-' + pins['node']['version'] + '-' + key + '-' + pins['node']['sha256'][:12])
+        verify_python_copy(args.bootstrap_python, python_home)
+        profile = manifest.get('npmSecurityProfile', '')
+        if not re.fullmatch(r'[a-f0-9]{64}', profile):
+            raise ValueError('The reviewed npm security profile is missing.')
+        node_home = runtimes / ('node-' + pins['node']['version'] + '-' + key + '-'
+            + pins['node']['sha256'][:12] + '-npm-' + profile[:12])
         beneath(root, node_home)
-        if not node_home.exists():
-            archive = fetch_archive(pins['node'], cache)
-            temporary = runtimes / ('.node-' + uuid.uuid4().hex)
-            extract_runtime(archive, temporary)
-            packaged = temporary / pins['node']['prefix'].rstrip('/')
-            if not packaged.is_dir(): raise ValueError('The Node archive prefix is invalid.')
-            os.replace(packaged, node_home)
-            temporary.rmdir()
         release = releases / (manifest['version'] + '-' + manifest['payloadSha256'][:12])
         stage = releases / ('.stage-' + uuid.uuid4().hex)
         stage.mkdir()
@@ -377,11 +414,35 @@ def install(args):
         if release.exists():
             verify_source(release, expected)
             shutil.rmtree(stage)
+        source_application = release if release.exists() else stage
+        active_stage = {'product': 'cypher-tempre-chainchat', 'version': manifest['version'],
+            'release': str(source_application), 'node': str(node_home / 'bin/node'),
+            'python': str(python_home / 'bin/python3'), 'data': str(data)}
+        archive = fetch_archive(pins['node'], cache)
+
+        def secured_node(action, candidate):
+            run_checked([active_stage['python'], '-B', source_application / 'installer/bootstrap_npm.py', action,
+                '--application', source_application, '--install-root', root, '--node-home', candidate,
+                '--archive', archive, '--platform', key, '--cache', cache / 'security-overlays'],
+                active_stage, root / 'install.log', 300)
+
+        if not node_home.exists():
+            temporary = runtimes / ('.node-unpack-' + uuid.uuid4().hex)
+            excluded = pins['node']['prefix'].rstrip('/') + '/lib/node_modules/npm'
+            extract_runtime(archive, temporary, excluded_prefix=excluded)
+            packaged = temporary / pins['node']['prefix'].rstrip('/')
+            if not packaged.is_dir(): raise ValueError('The Node archive prefix is invalid.')
+            node_stage = node_home.with_name(node_home.name + '.stage-' + uuid.uuid4().hex)
+            os.replace(packaged, node_stage)
+            temporary.rmdir()
+            secured_node('prepare', node_stage)
+            os.replace(node_stage, node_home)
         else:
-            active_stage = {'product': 'cypher-tempre-chainchat', 'version': manifest['version'],
-                'release': str(stage), 'node': str(node_home / 'bin/node'), 'python': str(python_home / 'bin/python3'), 'data': str(data)}
+            secured_node('verify', node_home)
+        if not release.exists():
             npm = node_home / 'lib/node_modules/npm/bin/npm-cli.js'
-            # Ignore inherited npm configuration/credentials and all lifecycle scripts.
+            # The only npm CLI used is the fully attested secured replacement.
+            # Ignore inherited npm configuration/credentials and lifecycle scripts.
             empty = stage / '.npm-empty-config'; empty.write_text('', encoding='utf-8')
             global_empty = stage / '.npm-global-empty-config'; global_empty.write_text('', encoding='utf-8')
             environment_before = {name: os.environ.get(name) for name in ('NPM_CONFIG_USERCONFIG', 'NPM_CONFIG_GLOBALCONFIG', 'NPM_CONFIG_REGISTRY', 'NPM_CONFIG_CACHE')}
@@ -390,9 +451,9 @@ def install(args):
             try:
                 for prefix in (stage, stage / 'openclaw/runtime'):
                     run_checked([active_stage['node'], npm, 'ci', '--ignore-scripts', '--prefix', prefix], active_stage, root / 'install.log')
-                run_checked([active_stage['python'], stage / 'installer/security_overlays.py', '--application', stage,
+                run_checked([active_stage['python'], '-B', stage / 'installer/security_overlays.py', '--application', stage,
                     '--cache', cache / 'security-overlays'], active_stage, root / 'install.log', 180)
-                run_checked([active_stage['python'], stage / 'installer/runtime_compatibility.py', '--application', stage],
+                run_checked([active_stage['python'], '-B', stage / 'installer/runtime_compatibility.py', '--application', stage],
                     active_stage, root / 'install.log', 60)
                 run_checked([active_stage['node'], stage / 'openclaw/launcher.mjs', '--check'], active_stage, root / 'install.log', 120)
             finally:

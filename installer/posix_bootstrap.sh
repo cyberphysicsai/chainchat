@@ -78,7 +78,7 @@ else base64 -d < "$temp_dir/bundle.base64" > "$temp_dir/bundle.tar.gz"; fi
 if [ "$(hash_file "$temp_dir/bundle.tar.gz")" != '@BUNDLE_SHA256@' ]; then echo 'Bundled application integrity check failed.' >&2; exit 1; fi
 mkdir "$temp_dir/bundle"
 tar -xzf "$temp_dir/bundle.tar.gz" -C "$temp_dir/bundle"
-"$temp_dir/python/bin/python3" -I "$temp_dir/bundle/posix_install.py" --bundle "$temp_dir/bundle" --bootstrap-python "$temp_dir/python" --cache-dir "$cache_dir" "$@"
+"$temp_dir/python/bin/python3" -I -B "$temp_dir/bundle/posix_install.py" --bundle "$temp_dir/bundle" --bootstrap-python "$temp_dir/python" --cache-dir "$cache_dir" "$@"
 result=$?
 # The Python installer safely reclaims only its own marked bootstrap directory.
 exit "$result"
