@@ -32,7 +32,7 @@ jobs:
           test "$(git rev-parse HEAD:engine/proof-of-interaction)" = "$expected"
       - name: Prepare the verified secured npm before any dependency installation
         run: |
-          python installer/bootstrap_npm.py prepare-npm --application . --cache "$RUNNER_TEMP/chainchat-security-overlays" --destination "$RUNNER_TEMP/chainchat-secured-npm" > "$RUNNER_TEMP/chainchat-secured-npm.json"
+          python -I -B installer/bootstrap_npm.py prepare-npm --application . --cache "$RUNNER_TEMP/chainchat-security-overlays" --destination "$RUNNER_TEMP/chainchat-secured-npm" > "$RUNNER_TEMP/chainchat-secured-npm.json"
           echo "CT_BOOTSTRAP_NPM_CLI=$(python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-secured-npm.json").read_text())["npmCli"])')" >> "$GITHUB_ENV"
       - name: Install exact OpenClaw pin and enable real runtime tests
         run: |

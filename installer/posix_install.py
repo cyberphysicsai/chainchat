@@ -267,7 +267,7 @@ def environment(active):
     allowed.update(CT_CHAT_DATA=active['data'], CT_CHAT_PYTHON=active['python'],
         CT_OPENCLAW_MODULE=str(Path(active['release']) / 'openclaw/runtime/node_modules/openclaw'),
         CT_OPERATOR_TRUST_ROOT=str(Path(active['data']) / 'operator-approvals'),
-        PYTHONIOENCODING='utf-8', PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1',
+        PYTHONIOENCODING='utf-8', PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1', PYTHONNOUSERSITE='1',
         PATH=str(Path(active['node']).parent) + os.pathsep + allowed.get('PATH', ''))
     for name in ('CT_CHAT_PORT', 'CT_CHAT_NO_BROWSER'):
         if name in os.environ:
@@ -421,7 +421,7 @@ def install(args):
         archive = fetch_archive(pins['node'], cache)
 
         def secured_node(action, candidate):
-            run_checked([active_stage['python'], '-B', source_application / 'installer/bootstrap_npm.py', action,
+            run_checked([active_stage['python'], '-I', '-B', source_application / 'installer/bootstrap_npm.py', action,
                 '--application', source_application, '--install-root', root, '--node-home', candidate,
                 '--archive', archive, '--platform', key, '--cache', cache / 'security-overlays'],
                 active_stage, root / 'install.log', 300)
@@ -451,9 +451,9 @@ def install(args):
             try:
                 for prefix in (stage, stage / 'openclaw/runtime'):
                     run_checked([active_stage['node'], npm, 'ci', '--ignore-scripts', '--prefix', prefix], active_stage, root / 'install.log')
-                run_checked([active_stage['python'], '-B', stage / 'installer/security_overlays.py', '--application', stage,
+                run_checked([active_stage['python'], '-I', '-B', stage / 'installer/security_overlays.py', '--application', stage,
                     '--cache', cache / 'security-overlays'], active_stage, root / 'install.log', 180)
-                run_checked([active_stage['python'], '-B', stage / 'installer/runtime_compatibility.py', '--application', stage],
+                run_checked([active_stage['python'], '-I', '-B', stage / 'installer/runtime_compatibility.py', '--application', stage],
                     active_stage, root / 'install.log', 60)
                 run_checked([active_stage['node'], stage / 'openclaw/launcher.mjs', '--check'], active_stage, root / 'install.log', 120)
             finally:
