@@ -97,6 +97,12 @@ test('standalone CJS and ESM matchers bound growth before allocation and preserv
     const patternWithBraces = mm.escape('x\\*') + '.{js,ts}';
     assert.equal(mm.minimatch('x\\*.js', patternWithBraces, {platform: 'linux'}), true);
     assert.equal(mm.minimatch('x\\anything.js', patternWithBraces, {platform: 'linux'}), false);
+    const windowsLiteral = mm.escape('x{a,b}', {windowsPathsNoEscape: true, magicalBraces: true});
+    assert.equal(mm.minimatch('x{a,b}', windowsLiteral, {allowWindowsEscape: false, platform: 'win32'}), true);
+    assert.equal(mm.minimatch('xa', windowsLiteral, {allowWindowsEscape: false, platform: 'win32'}), false);
+    const noextLiteral = mm.escape('!secret.txt', {windowsPathsNoEscape: true});
+    assert.equal(mm.minimatch('unrelated', noextLiteral, {windowsPathsNoEscape: true, noext: true}), false);
+    assert.equal(mm.minimatch('!secret.txt', noextLiteral, {windowsPathsNoEscape: true, noext: true}), false);
     assert.equal(mm.minimatch('src/a.js', 'src/*.js'), true);
     assert.equal(mm.minimatch('src/a.ts', 'src/*.js'), false);
   }
@@ -144,6 +150,14 @@ test('default and raw CJS/ESM glob copies stop filesystem work after cancellatio
       const matcher = new glob.Glob(escaped, {platform: 'linux'});
       assert.equal(matcher.patterns.some(p => portionMatches(p.pattern(), 'x\\*.js')), true);
       assert.equal(matcher.patterns.some(p => portionMatches(p.pattern(), 'x\\anything.js')), false);
+      const windowsLiteral = glob.escape('x{a,b}', {windowsPathsNoEscape: true, magicalBraces: true});
+      const legacyAlias = new glob.Glob(windowsLiteral, {allowWindowsEscape: false, platform: 'win32', nocase: false});
+      assert.equal(legacyAlias.patterns.some(p => portionMatches(p.pattern(), 'x{a,b}')), true);
+      assert.equal(legacyAlias.patterns.some(p => portionMatches(p.pattern(), 'xa')), false);
+      const noext = new glob.Glob(glob.escape('!secret.txt', {windowsPathsNoEscape: true}),
+        {windowsPathsNoEscape: true, noext: true, platform: 'win32', nocase: false});
+      assert.equal(noext.patterns.some(p => portionMatches(p.pattern(), 'unrelated')), false);
+      assert.equal(noext.patterns.some(p => portionMatches(p.pattern(), '!secret.txt')), false);
       assert.equal((await glob.glob('**/*.txt', {cwd: directory})).length, 4);
       assert.equal(glob.globSync('**/*.txt', {cwd: directory}).length, 4);
     }
