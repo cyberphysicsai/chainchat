@@ -47,10 +47,12 @@ test('explicit empty compatible completions are held before native fallback with
   const stopped = message => ({choices: [{message, finish_reason: 'stop'}]});
   for (const empty of [stopped({content: ''}), stopped({content: '  \n'}), stopped({content: null, reasoning_content: 'PRIVATE reasoning'}),
     stopped({content: [{type: 'text', text: ''}]}),
+    ...['reasoning', 'thinking', 'redacted_thinking'].map(type => stopped({content: [{type, text: 'PRIVATE reasoning'}]})),
     {choices: [{message: {content: ''}, finish_reason: 'stop'}, {message: {content: 'A different choice'}, finish_reason: 'stop'}]},
     [{choices: [{delta: {role: 'assistant', content: ''}, finish_reason: null}]}, {choices: [{delta: {}, finish_reason: 'stop'}]}]])
     assert.throws(() => check(empty), error => error.code === 'PROVIDER_NO_TEXT' && error.stage === 'generation' && error.status === 422 && !error.message.includes('PRIVATE'));
   for (const output of [stopped({content: 'Hello'}), stopped({content: [{type: 'text', text: 'Hello'}]}),
+    stopped({content: [{type: 'thinking', text: 'PRIVATE reasoning'}, {type: 'text', text: 'Hello'}]}),
     stopped({content: null, tool_calls: [{id: 'exact-call', type: 'function', function: {name: 'read', arguments: '{}'}}]}),
     stopped({content: null, function_call: {name: 'read', arguments: '{}'}}),
     stopped({content: [{type: 'image_url', image_url: {url: 'data:image/png;base64,synthetic'}}]}),

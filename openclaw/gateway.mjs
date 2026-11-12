@@ -182,9 +182,12 @@ function inspectResponse(config, buffer) {
 // adapters otherwise turn a token-limited stream into a normal final reply.
 export function assertProviderCompletion(provider, buffer) {
   let compatibleStopped = false, compatibleOutput = false;
-  const contentOutput = content => typeof content === 'string' ? !!content.trim() : Array.isArray(content) && content.some(part =>
-    typeof part === 'string' ? !!part.trim() : typeof part?.text === 'string' && !!part.text.trim() ||
-      part && typeof part.type === 'string' && !['text', 'output_text', 'reasoning', 'thinking', 'redacted_thinking'].includes(part.type));
+  const contentOutput = content => typeof content === 'string' ? !!content.trim() : Array.isArray(content) && content.some(part => {
+    if (typeof part === 'string') return !!part.trim();
+    if (!part || ['reasoning', 'thinking', 'redacted_thinking'].includes(part.type)) return false;
+    return typeof part.text === 'string' && !!part.text.trim() ||
+      typeof part.type === 'string' && !['text', 'output_text'].includes(part.type);
+  });
   const termination = code => { throw Object.assign(fail(
     code === 'PROVIDER_INCOMPLETE' ? 'The provider did not finish a complete response.'
       : code === 'PROVIDER_NO_TEXT' ? 'The provider completed this turn without answer text or a native tool/media payload.'
