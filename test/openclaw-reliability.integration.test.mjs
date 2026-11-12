@@ -100,7 +100,7 @@ try {
     } }
     await visit(root); return output;
   }
-  for (const scenario of ['active-valid', 'active-fenced-review', 'paused-same-provider', 'active-provider-cap', 'paused-provider-cap', 'active-invalid-evidence', 'active-low-score', 'active-truncated-planner', 'active-provider-policy-hold', 'paused-low-score', 'active-empty-final']) {
+  for (const scenario of ['active-valid', 'active-fenced-review', 'paused-same-provider', 'active-provider-cap', 'paused-provider-cap', 'active-invalid-evidence', 'active-low-score', 'active-truncated-planner', 'active-provider-policy-hold', 'paused-low-score', 'active-empty-final', 'active-after-empty']) {
     if (scenario === 'active-fenced-review') format = 'fenced';
     if (scenario === 'active-provider-cap') {
       format = 'bare'; providerCap = 4096;
@@ -117,6 +117,7 @@ try {
       format = 'empty-answer'; truncatePlanner = false; holdPlanner = false;
       assert.equal((await call('/api/cognition', { mode: 'active', confirm: true })).status, 200);
     }
+    if (scenario === 'active-after-empty') format = 'bare'; // Same connected model and settings; no reconnect or manual restart.
     if (scenario.startsWith('paused-')) assert.equal((await call('/api/cognition', { mode: 'dormant', confirm: true })).status, 200);
     const chainFile = path.join(app.store.agents[0].root, 'chain', 'rings.jsonl');
     const beforeRings = await fs.readFile(chainFile);
@@ -155,6 +156,15 @@ try {
       error: response.body.error ?? null, mode: response.body.message?.mode ?? null,
       answerReleased: typeof response.body.message?.content === 'string', calls: calls.slice(start) };
     results.push(result); t.diagnostic(JSON.stringify(result));
+    if (scenario === 'active-empty-final' && response.body.code !== 'PROVIDER_NO_TEXT' || scenario === 'active-after-empty' && response.status !== 200) {
+      // Runtime stderr can contain private prompts. Emit only exact fixed-code
+      // supervisor diagnostics, bounded to the most recent sixteen lines.
+      const fixed = diagnostics.join('').split(/\r?\n/u).filter(line =>
+        /^\[chainchat\] private model request held code=(?:PROVIDER_(?:NO_TEXT|INCOMPLETE|CONTENT_HELD|HTTP_ERROR|RATE_LIMIT|INVALID_RESPONSE|CONNECTION_ERROR)|OPENCLAW_(?:MODEL_ADMISSION|CONTEXT_BUDGET))(?: systemMarkers=\d+ totalMarkers=\d+)?$/u.test(line) ||
+        /^\[chainchat\] mandatory context fault reason=(?:FACTORY_FAILED|BOOTSTRAP_FAILED|INGEST_FAILED|ASSEMBLE_FAILED|COMPACT_FAILED|COMMIT_TURN_FAILED|UNKNOWN)$/u.test(line) ||
+        /^\[chainchat\] native lifecycle event=(?:exit|control-close) generation=(?:\d+|UNKNOWN) code=(?:\d+|none|UNKNOWN) signal=(?:none|SIGTERM|SIGKILL|SIGINT|SIGHUP|SIGABRT|SIGSEGV|SIGBUS|SIGILL|UNKNOWN)$/u.test(line));
+      t.diagnostic(JSON.stringify({scenario, fixedRuntimeDiagnostics: fixed.slice(-16)}));
+    }
   }
   assert.equal(results[0].status, 200);
   assert.equal(results[1].status, 200);
@@ -184,12 +194,16 @@ try {
     assert.ok(result.calls.some(call => call.kind === 'answer'), `${result.scenario} must generate an actual candidate.`);
     assert.ok(result.calls.some(call => call.kind === 'review'), `${result.scenario} must be held by an actual independent review.`);
   }
-  assert.ok(['OPENCLAW_EMPTY_RESPONSE', 'PROVIDER_NO_TEXT'].includes(results[10].code),
-    'An empty reply must preserve the actual provider-empty cause or native-empty fallback, never a generic enforcement error.');
-  assert.equal(results[10].status, results[10].code === 'OPENCLAW_EMPTY_RESPONSE' ? 502 : 422);
+  assert.equal(results[10].code, 'PROVIDER_NO_TEXT',
+    'The explicit successful empty provider stop must be held before native fallback, never reported as a generic runtime failure.');
+  assert.equal(results[10].status, 422);
   assert.equal(results[10].stage, 'generation');
   assert.equal(results[10].answerReleased, false, 'An empty native reply is a generation failure, not a fabricated PoI rejection.');
   assert.ok(results[10].calls.some(call => call.kind === 'answer'));
+  assert.equal(results[11].status, 200, 'The next chat must recover with the same connected model and settings.');
+  assert.equal(results[11].answerReleased, true);
+  assert.ok(results[11].calls.some(call => call.kind === 'answer') && results[11].calls.some(call => call.kind === 'review'),
+    'Recovery must generate and independently review a real new answer, then satisfy the active commit assertions above.');
   const selected = app.store.agents[0];
   assert.equal((await engine({ op: 'verify', root: selected.root })).verified, true);
 } finally {

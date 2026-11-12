@@ -181,13 +181,18 @@ function inspectResponse(config, buffer) {
 // Keep the provider's explicit stop condition across the native adapter. Some
 // adapters otherwise turn a token-limited stream into a normal final reply.
 export function assertProviderCompletion(provider, buffer) {
+  let compatibleStopped = false, compatibleOutput = false;
+  const contentOutput = content => typeof content === 'string' ? !!content.trim() : Array.isArray(content) && content.some(part =>
+    typeof part === 'string' ? !!part.trim() : typeof part?.text === 'string' && !!part.text.trim() ||
+      part && typeof part.type === 'string' && !['text', 'output_text', 'reasoning', 'thinking', 'redacted_thinking'].includes(part.type));
   const termination = code => { throw Object.assign(fail(
     code === 'PROVIDER_INCOMPLETE' ? 'The provider did not finish a complete response.'
+      : code === 'PROVIDER_NO_TEXT' ? 'The provider completed this turn without answer text or a native tool/media payload.'
       : code === 'PROVIDER_CONTENT_HELD' ? 'The provider held the model response.'
       : code === 'PROVIDER_RATE_LIMIT' ? 'The provider rate limit or quota was reached.'
       : code === 'PROVIDER_HTTP_ERROR' ? 'The provider rejected the model request.'
       : 'The provider returned an invalid or unsuccessful response.', code,
-    code === 'PROVIDER_RATE_LIMIT' ? 429 : code === 'PROVIDER_CONTENT_HELD' ? 422 : 502), { stage: 'generation' }); };
+    code === 'PROVIDER_RATE_LIMIT' ? 429 : ['PROVIDER_CONTENT_HELD', 'PROVIDER_NO_TEXT'].includes(code) ? 422 : 502), { stage: 'generation' }); };
   const providerFailure = error => {
     const codes = [error?.code, error?.type, error?.status].map(value => String(value ?? '').toLowerCase());
     if (codes.some(code => ['429', 'rate_limit_exceeded', 'rate_limit_error', 'rate_limit', 'quota_exceeded', 'insufficient_quota', 'resource_exhausted'].includes(code))) termination('PROVIDER_RATE_LIMIT');
@@ -205,6 +210,16 @@ export function assertProviderCompletion(provider, buffer) {
       if (held) termination('PROVIDER_CONTENT_HELD');
       if (reasons.some(reason => reason != null && !['stop', 'length', 'tool_calls', 'function_call'].includes(reason))) termination('PROVIDER_INVALID_RESPONSE');
       incomplete = reasons.includes('length');
+      // The pinned native adapter consumes choices[0]. A successful empty
+      // completion otherwise enters its fallback path instead of exposing a
+      // useful provider cause. Inspect only explicit stops, across all chunks;
+      // reasoning alone is not an answer. Native tools and media remain under
+      // their existing independent action/output gates.
+      const choice = choices[0];
+      if (choice?.finish_reason === 'stop') compatibleStopped = true;
+      if (['tool_calls', 'function_call'].includes(choice?.finish_reason)) compatibleOutput = true;
+      for (const message of [choice?.message, choice?.delta]) if (message && (
+        contentOutput(message.content) || message.tool_calls?.length || message.function_call || message.audio || message.images?.length)) compatibleOutput = true;
     } else if (provider === 'openai') {
       const result = value.response || value;
       if (result.error || result.status === 'failed' || value.type === 'response.failed') providerFailure(result.error);
@@ -233,6 +248,7 @@ export function assertProviderCompletion(provider, buffer) {
     }
     if (incomplete) termination('PROVIDER_INCOMPLETE');
   }
+  if (provider === 'compatible' && compatibleStopped && !compatibleOutput) termination('PROVIDER_NO_TEXT');
 }
 
 /** A private per-invocation capability can occur once in system instructions.

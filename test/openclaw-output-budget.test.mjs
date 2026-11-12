@@ -41,6 +41,24 @@ test('native failure diagnostics preserve useful fixed code/stage without copyin
   assert.equal(errorStage({ code: 'REQUEST_CANCELLED' }), 'cancellation');
 });
 
+test('explicit empty compatible completions are held before native fallback without rejecting tools, media or partial streams', () => {
+  const check = values => assertProviderCompletion('compatible', Buffer.from(Array.isArray(values)
+    ? values.map(value => 'data: ' + JSON.stringify(value) + '\n\n').join('') + 'data: [DONE]\n\n' : JSON.stringify(values)));
+  const stopped = message => ({choices: [{message, finish_reason: 'stop'}]});
+  for (const empty of [stopped({content: ''}), stopped({content: '  \n'}), stopped({content: null, reasoning_content: 'PRIVATE reasoning'}),
+    stopped({content: [{type: 'text', text: ''}]}),
+    {choices: [{message: {content: ''}, finish_reason: 'stop'}, {message: {content: 'A different choice'}, finish_reason: 'stop'}]},
+    [{choices: [{delta: {role: 'assistant', content: ''}, finish_reason: null}]}, {choices: [{delta: {}, finish_reason: 'stop'}]}]])
+    assert.throws(() => check(empty), error => error.code === 'PROVIDER_NO_TEXT' && error.stage === 'generation' && error.status === 422 && !error.message.includes('PRIVATE'));
+  for (const output of [stopped({content: 'Hello'}), stopped({content: [{type: 'text', text: 'Hello'}]}),
+    stopped({content: null, tool_calls: [{id: 'exact-call', type: 'function', function: {name: 'read', arguments: '{}'}}]}),
+    stopped({content: null, function_call: {name: 'read', arguments: '{}'}}),
+    stopped({content: [{type: 'image_url', image_url: {url: 'data:image/png;base64,synthetic'}}]}),
+    stopped({content: null, audio: {data: 'synthetic-audio'}}), stopped({content: null, images: [{image_url: {url: 'synthetic-image'}}]}),
+    [{choices: [{delta: {content: 'Hello'}, finish_reason: null}]}, {choices: [{delta: {}, finish_reason: 'stop'}]}],
+    {choices: [{delta: {role: 'assistant', content: ''}, finish_reason: null}]}]) assert.doesNotThrow(() => check(output));
+});
+
 test('native adapters retain explicit provider truncation and never treat tool calls or quoted stop strings as truncation', () => {
   for (const [provider, value] of [
     ['compatible', { choices: [{ finish_reason: 'length' }] }],
