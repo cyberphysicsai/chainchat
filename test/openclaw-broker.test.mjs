@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { createPoIBroker } from '../openclaw/broker.mjs';
 import { engine } from '../lib/engine.mjs';
 import { FRUITS, DIMENSIONS } from '../lib/providers.mjs';
+import { invocationError } from '../lib/runtime-errors.mjs';
 const hash = text => createHash('sha256').update(text).digest('hex');
 const good = () => ({ approved: true, scores: Object.fromEntries(DIMENSIONS.map(k => [k, 240])),
   fruitages: Object.fromEntries(FRUITS.map(k => [k, 240])), usedRings: [], rationale: 'Supported and compatible with the covenant.' });
@@ -63,6 +64,51 @@ test('queued native run adoption requires its exact typed host source nonce and 
   assert.equal((await f.call('admit',{runId:'native-queued-run',nativeContext:{currentSourceTurnId:'host-input-nonce:user'}})).body.allowed,true);
   assert.equal(current.runId,'native-queued-run');assert.deepEqual(current.nativeInputProof,{kind:'source-turn',inputId:'host-input-nonce'});
   assert.equal((await f.call('admit',{runId:'another-native-run',nativeContext:{currentSourceTurnId:'host-input-nonce:user'}})).body.allowed,false);
+});
+
+test('correlated native admission and route failures retain only fixed parent diagnostics', async t => {
+  const sessionKey = 'agent:main:chainchat:admission-diagnostics';
+  const config = { provider: 'compatible', model: 'fixture', baseUrl: 'http://127.0.0.1:1234/v1', apiKey: 'fixture-private-key' };
+  const privateDetail = 'private-provider-key-and-prompt-must-not-escape';
+  let revoked = false, revocationCode = 'SESSION_CHANGED', engineCalls = 0;
+  const broker = createPoIBroker({ engine: async request => {
+    engineCalls++; assert.equal(request.op, 'inspect');
+    return { verified: true, genesis: { hash: 'a'.repeat(64) }, head: { hash: 'b'.repeat(64) } };
+  }, review: async () => { throw new Error('No reviewer may run during admission diagnostics.'); } });
+  await broker.start(); t.after(() => broker.close());
+  const register = extra => broker.registerInvocation({ config, args: { messages: [{ role: 'user', content: 'Hello' }] },
+    context: { root: path.join(os.tmpdir(), 'unused-admission-diagnostics'), input: 'Hello', purpose: 'candidate', loadout: [],
+      authorize: async () => { if (revoked) throw Object.assign(new Error(privateDetail), { code: revocationCode }); }, ...extra },
+    sessionKey, invocationId: 'diagnostic-invocation' });
+  const call = async (op, fields) => {
+    const response = await fetch(broker.url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${broker.token}` },
+      body: JSON.stringify({ version: 1, op, sessionKey, ...fields }) });
+    return response.json();
+  };
+  const claim = await register({ expectedClientInputId: 'original-input' });
+  const current = broker.nativeInvocation(sessionKey);
+  revoked = true;
+  assert.equal((await call('model_route', { runId: 'unrelated-run' })).allowed, false);
+  assert.equal(broker.invocationError(claim), null, 'An unrelated same-session event cannot poison the foreground diagnostic.');
+  assert.equal((await call('model_route', { runId: 'queued-run', nativeContext: { currentSourceTurnId: 'original-input:user' } })).allowed, false);
+  const snapshot = broker.invocationError(claim);
+  assert.equal(snapshot?.code, 'SESSION_CHANGED', 'The parent must recover the precise cause when the native hook suppresses its final frame.');
+  assert.equal(snapshot?.stage, 'authorization');
+  assert.equal(JSON.stringify(snapshot).includes(privateDetail), false);
+  assert.equal(current.runId, null, 'Recording a correlated failure must not admit or bind its run.');
+  assert.equal(current.finalized, false); assert.equal(current.receipt, null);
+  assert.equal(invocationError(snapshot)?.code, 'SESSION_CHANGED');
+  revoked = false;
+  assert.equal((await call('admit', { runId: 'queued-run', nativeContext: { currentSourceTurnId: 'original-input:user' } })).allowed, true);
+  revoked = true; revocationCode = 'PAIR_REQUIRED';
+  assert.equal((await call('admit', { runId: 'queued-run' })).allowed, false);
+  assert.equal(broker.invocationError(claim)?.code, 'PAIR_REQUIRED', 'Bound admission failures also survive the native held-output frame.');
+  revocationCode = 'SESSION_CHANGED';
+  assert.equal((await call('model_route', { runId: 'unrelated-run', nativeContext: { currentSourceTurnId: 'original-input:user' } })).allowed, false);
+  assert.equal(broker.invocationError(claim)?.code, 'PAIR_REQUIRED', 'The input nonce cannot revive or poison a different run after binding.');
+  assert.equal((await call('model_route', { runId: 'queued-run' })).allowed, false);
+  assert.equal(broker.invocationError(claim)?.code, 'SESSION_CHANGED');
+  assert.equal(current.finalized, false); assert.equal(engineCalls, 1);
 });
 
 test('private context budgeting prepares the actual skill without publishing a native claim', async t => {
@@ -221,6 +267,11 @@ test('native prepare/review/evaluate bind an exact candidate, but UI retains com
   assert.ok(prepared.context.includes('Proof of Interaction'));
   assert.equal([...prepared.context.matchAll(/^name: proof-of-interaction\r?$/gmu)].length, 1, 'The native prepared context contains the canonical skill exactly once.');
   assert.ok(prepared.context.includes('CHAINCHAT HOST CONTRACT'));
+  const hostedContract = prepared.context.slice(prepared.context.indexOf('CHAINCHAT HOST CONTRACT'));
+  assert.match(hostedContract, /host owns the skill lifecycle and Timechain persistence/);
+  assert.match(hostedContract, /Do not attempt the skill CLI or write to its default root/);
+  assert.match(hostedContract, /candidate answer using the verified context and only the advertised tools/);
+  assert.match(hostedContract, /does not authorize bypassing the host, replacing enforcement or directly modifying the protected Timechain/);
   assert.match(prepared.context, /Canonical commitment follows the selected block policy/);
   assert.match(prepared.context, /reviewed continuum answers may be visible while pending commitment/);
   assert.equal(prepared.context.includes('after host review and the atomic conversation commitment'), false);

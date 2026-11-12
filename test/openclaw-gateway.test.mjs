@@ -6,7 +6,7 @@ import path from "node:path";
 import http from "node:http";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { createOpenClawGateway, providerRequest, OPENCLAW_VERSION, consumeModelRouteCapability, nativeControlCloseError, nativeLifecycleDiagnostic } from "../openclaw/gateway.mjs";
+import { createOpenClawGateway, providerRequest, OPENCLAW_VERSION, consumeModelRouteCapability, nativeControlCloseError, nativeLifecycleDiagnostic, readNativeReviewedCandidate } from "../openclaw/gateway.mjs";
 import { createPoIBroker } from "../openclaw/broker.mjs";
 import { engine } from "../lib/engine.mjs";
 import { DIMENSIONS, FRUITS } from "../lib/providers.mjs";
@@ -29,6 +29,30 @@ test('owned native lifecycle diagnostics are bounded fixed enums and numeric gen
   const result = nativeLifecycleDiagnostic('private-key\nexit', 'private-key', -1, 'private-key\nSIGTERM');
   assert.equal(result, '[chainchat] native lifecycle event=UNKNOWN generation=UNKNOWN code=UNKNOWN signal=UNKNOWN\n');
   assert.equal(result.includes('private-key'), false);
+});
+
+test('empty native finals retain strict candidate review and distinguish a missing reply from media or authorization faults', async () => {
+  const missing = Object.assign(new Error('Private missing receipt details'), {code: 'OPENCLAW_ENFORCEMENT'});
+  const read = async (text, result) => {
+    let calls = 0;
+    const broker = {readCandidate: async request => {
+      calls++; assert.deepEqual(request, {claimId: 'exact-private-claim'});
+      if (result instanceof Error) throw result;
+      return result;
+    }};
+    try { return await readNativeReviewedCandidate(broker, 'exact-private-claim', text); }
+    finally { assert.equal(calls, 1, 'The strict broker read must always run; no missing-review bypass is permitted.'); }
+  };
+  await assert.rejects(read('', missing), error => error.code === 'OPENCLAW_EMPTY_RESPONSE' && !error.message.includes(missing.message));
+  await assert.rejects(read('A nonempty unreviewed answer', missing), error => error === missing);
+  for (const code of ['NATIVE_OUTPUT_MEDIA_HELD', 'PAIR_REQUIRED', 'SESSION_CHANGED', 'OPENCLAW_CLAIM_EXPIRED']) {
+    const specific = Object.assign(new Error('Private diagnostic'), {code});
+    await assert.rejects(read('', specific), error => error === specific);
+  }
+  const reviewedMedia = {candidate: 'Reviewed media caption', receipt: {reviewed: true, outputAssets: [{id: 'owned-asset'}]}};
+  assert.equal(await read('', reviewedMedia), reviewedMedia, 'A media-only native final must continue to the existing exact display/custody assertions.');
+  const reviewedText = {candidate: 'Reviewed answer', receipt: {reviewed: true}};
+  assert.equal(await read('Reviewed answer', reviewedText), reviewedText);
 });
 
 test('private model route capability is accepted only once in system instructions and stripped for every protocol', () => {

@@ -58,6 +58,18 @@ export function nativeLifecycleDiagnostic(event, generation, code, signal) {
   const safeSignal = signal === null ? 'none' : ['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGHUP', 'SIGABRT', 'SIGSEGV', 'SIGBUS', 'SIGILL'].includes(signal) ? signal : 'UNKNOWN';
   return `[chainchat] native lifecycle event=${safeEvent} generation=${safeGeneration} code=${safeCode} signal=${safeSignal}\n`;
 }
+export async function readNativeReviewedCandidate(broker, claimId, generatedText) {
+  try { return await broker.readCandidate({claimId}); }
+  catch (error) {
+    // An empty native final can have no receipt because no candidate existed.
+    // Keep the strict read (including valid media-only candidates) and change
+    // only its generic missing-receipt diagnostic. The invocation catch still
+    // prioritizes the parent's precise provider/review/authorization failure.
+    if (!generatedText?.trim() && error?.code === 'OPENCLAW_ENFORCEMENT')
+      throw fail('OpenClaw ended this turn without an approved final reply.', 'OPENCLAW_EMPTY_RESPONSE');
+    throw error;
+  }
+}
 function nativeControlWatchdogMs(requestTimeoutMs) {
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 100 || requestTimeoutMs > 600000)
     throw new TypeError('The native invocation timeout must be an integer from 100 through 600000 milliseconds.');
@@ -1502,7 +1514,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
           deliver: false, ...(attachments.length?{attachments}:{}), ...(native?.intent ? { intent: native.intent } : {}), ...(native?.goalOperation ? { goalOperation: native.goalOperation } : {}) }, controller, {allowEmptyFinal:true});
         responseComplete = true; assertCredentialIsolation(config, generated); checkServiceIsolation(generated);
         let enforcement;
-        const reviewed = typeof broker.readCandidate === 'function' ? await broker.readCandidate({claimId:claim.claimId}) : null;
+        const reviewed = typeof broker.readCandidate === 'function' ? await readNativeReviewedCandidate(broker, claim.claimId, generated.text) : null;
         if (reviewed?.receipt?.outputAssets?.length) {
           if (typeof broker.assertDisplayCandidate !== 'function') throw fail('The generated media lacks a verified display projection.','NATIVE_OUTPUT_MEDIA_HELD');
           const sdk=await import(pathToFileURL(path.join(upstream,'dist/plugin-sdk/channel-outbound.js')).href);
