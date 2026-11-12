@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 const application = process.env.CT_CHAINCHAT_PACKAGE || fileURLToPath(new URL('..', import.meta.url));
 const runtimePackage = process.env.CT_OPENCLAW_PACKAGE, runtimeNode = process.env.CT_OPENCLAW_NODE;
-test('default active chat recovers provider formatting and enforces model limits without weakening review', {
+test('default active chat normalizes a copied endpoint, seals reviewed replies and preserves safe denial causes', {
   skip: !runtimePackage || !runtimeNode ? 'Set the pinned native runtime for active-chat reliability acceptance.' : false,
   timeout: 420000,
 }, async t => {
@@ -35,7 +35,16 @@ const upstream = http.createServer(async (req, res) => {
   const isReview = text.includes('independent pre-release covenant reviewer');
   const isPlanner = text.includes('Plan retrieval for a local Timechain agent');
   const kind = isReview ? 'review' : isPlanner ? 'planner' : 'answer';
-  calls.push({ kind, bytes: Buffer.byteLength(raw), stream: body.stream === true, outputAllowance: body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens });
+  calls.push({ kind, route: req.url, canonicalSkill: text.includes('name: proof-of-interaction'),
+    hostContract: text.includes('CHAINCHAT HOST CONTRACT'), privateCredentialInBody: text.includes('disposable-fixture-key'),
+    bytes: Buffer.byteLength(raw), stream: body.stream === true, outputAllowance: body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens });
+  // An upstream that accepts arbitrary paths hides a duplicated endpoint suffix.
+  // Match the actual provider route for generation, planning and required review.
+  if (req.url !== '/v1/chat/completions') {
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { type: 'invalid_request_error', message: 'Synthetic provider route does not exist.' } }));
+    return;
+  }
   if (providerCap && kind === 'answer' && (body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens) > providerCap) {
     res.writeHead(400, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: { message: 'Fixture model output cap exceeded', type: 'invalid_request_error' } }));
@@ -45,7 +54,7 @@ const upstream = http.createServer(async (req, res) => {
   if (format === 'missing-evidence') delete assessment.usedRings;
   if (format === 'low-score') assessment.fruits.kindness = 179;
   const assessmentText = JSON.stringify(assessment);
-  const content = isReview ? (format === 'fenced' ? '```json\n' + assessmentText + '\n```' : assessmentText) : isPlanner ? plan : answer;
+  const content = isReview ? (format === 'fenced' ? '```json\n' + assessmentText + '\n```' : assessmentText) : isPlanner ? plan : format === 'empty-answer' ? '' : answer;
   if (!body.stream) {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ id: 'local-fixture', choices: [{ message: { role: 'assistant', content }, finish_reason: isPlanner && holdPlanner ? 'content_filter' : isPlanner && truncatePlanner ? 'length' : 'stop' }],
@@ -75,8 +84,12 @@ try {
   };
   bearer = (await call('/api/pair', { code: 'ACTIVE-REVIEW-DIAGNOSIS' })).body.token;
   assert.equal((await call('/api/agents', { name: 'Cypher Tempre' })).status, 201);
-  assert.equal((await call('/api/provider', { provider: 'compatible', model: 'fixture-model', apiKey: 'disposable-fixture-key',
-    baseUrl: `http://127.0.0.1:${upstream.address().port}/v1` })).status, 200);
+  const providerBase = `http://127.0.0.1:${upstream.address().port}/v1`;
+  const configured = await call('/api/provider', { provider: 'compatible', model: 'fixture-model', apiKey: 'disposable-fixture-key',
+    baseUrl: `${providerBase}/chat/completions/` });
+  assert.equal(configured.status, 200);
+  assert.equal(configured.body.provider.baseUrl, providerBase);
+  assert.equal(JSON.stringify(configured.body).includes('disposable-fixture-key'), false);
   const state = await call('/api/state');
   for (const key of ['learning', 'semanticRecall', 'autoRoute', 'autoSprout']) assert.equal(state.body.cognition[key], true, key);
   async function chainFiles(root) {
@@ -87,7 +100,7 @@ try {
     } }
     await visit(root); return output;
   }
-  for (const scenario of ['active-valid', 'active-fenced-review', 'paused-same-provider', 'active-provider-cap', 'paused-provider-cap', 'active-invalid-evidence', 'active-low-score', 'active-truncated-planner', 'active-provider-policy-hold', 'paused-low-score']) {
+  for (const scenario of ['active-valid', 'active-fenced-review', 'paused-same-provider', 'active-provider-cap', 'paused-provider-cap', 'active-invalid-evidence', 'active-low-score', 'active-truncated-planner', 'active-provider-policy-hold', 'paused-low-score', 'active-empty-final', 'active-after-empty']) {
     if (scenario === 'active-fenced-review') format = 'fenced';
     if (scenario === 'active-provider-cap') {
       format = 'bare'; providerCap = 4096;
@@ -100,9 +113,36 @@ try {
     if (scenario === 'active-truncated-planner') { format = 'bare'; truncatePlanner = true; }
     if (scenario === 'active-provider-policy-hold') { format = 'bare'; truncatePlanner = false; holdPlanner = true; }
     if (scenario === 'paused-low-score') { format = 'low-score'; truncatePlanner = false; holdPlanner = false; }
+    if (scenario === 'active-empty-final') {
+      format = 'empty-answer'; truncatePlanner = false; holdPlanner = false;
+      assert.equal((await call('/api/cognition', { mode: 'active', confirm: true })).status, 200);
+    }
+    if (scenario === 'active-after-empty') format = 'bare'; // Same connected model and settings; no reconnect or manual restart.
     if (scenario.startsWith('paused-')) assert.equal((await call('/api/cognition', { mode: 'dormant', confirm: true })).status, 200);
+    const chainFile = path.join(app.store.agents[0].root, 'chain', 'rings.jsonl');
+    const beforeRings = await fs.readFile(chainFile);
     const beforePaused = scenario.startsWith('paused-') ? await chainFiles(app.store.agents[0].root) : null;
     const start = calls.length, response = await call('/api/chat', { message: 'Please introduce yourself' });
+    const currentCalls = calls.slice(start), afterRings = await fs.readFile(chainFile);
+    assert.ok(currentCalls.every(call => call.route === '/v1/chat/completions'),
+      'The copied endpoint must normalize before every native provider request, including required review.');
+    assert.ok(currentCalls.every(call => !call.privateCredentialInBody), 'API credentials cannot enter model prompts.');
+    assert.ok(currentCalls.filter(call => call.kind === 'answer').every(call => call.canonicalSkill && call.hostContract),
+      'Every real answer-generation call must wear the canonical skill and host contract.');
+    if (response.status >= 400) {
+      assert.equal(response.body.message?.content, undefined, 'A denied turn releases no candidate.');
+      assert.equal(JSON.stringify(response.body).includes(answer), false);
+      assert.deepEqual(afterRings, beforeRings, 'A denied turn must not append a conversation ring.');
+    } else if (scenario.startsWith('active-')) {
+      assert.equal(response.body.message.content, answer);
+      assert.equal(response.body.message.gate.approved, true);
+      assert.equal(response.body.state.gate.required, true);
+      assert.ok(Number.isSafeInteger(response.body.message.ring?.index));
+      assert.ok(currentCalls.some(call => call.kind === 'answer'));
+      assert.ok(currentCalls.some(call => call.kind === 'review'), 'Successful native generation must receive a real mandatory review call.');
+      assert.ok(afterRings.length > beforeRings.length, 'An accepted active turn must commit before release.');
+      assert.deepEqual(afterRings.subarray(0, beforeRings.length), beforeRings, 'Existing ring bytes remain unchanged.');
+    }
     if (beforePaused) {
       assert.deepEqual(await chainFiles(app.store.agents[0].root), beforePaused, 'Paused review must leave PAUSED, history and registries byte-identical.');
       if (response.status === 200) {
@@ -116,6 +156,15 @@ try {
       error: response.body.error ?? null, mode: response.body.message?.mode ?? null,
       answerReleased: typeof response.body.message?.content === 'string', calls: calls.slice(start) };
     results.push(result); t.diagnostic(JSON.stringify(result));
+    if (scenario === 'active-empty-final' && response.body.code !== 'PROVIDER_NO_TEXT' || scenario === 'active-after-empty' && response.status !== 200) {
+      // Runtime stderr can contain private prompts. Emit only exact fixed-code
+      // supervisor diagnostics, bounded to the most recent sixteen lines.
+      const fixed = diagnostics.join('').split(/\r?\n/u).filter(line =>
+        /^\[chainchat\] private model request held code=(?:PROVIDER_(?:NO_TEXT|INCOMPLETE|CONTENT_HELD|HTTP_ERROR|RATE_LIMIT|INVALID_RESPONSE|CONNECTION_ERROR)|OPENCLAW_(?:MODEL_ADMISSION|CONTEXT_BUDGET))(?: systemMarkers=\d+ totalMarkers=\d+)?$/u.test(line) ||
+        /^\[chainchat\] mandatory context fault reason=(?:FACTORY_FAILED|BOOTSTRAP_FAILED|INGEST_FAILED|ASSEMBLE_FAILED|COMPACT_FAILED|COMMIT_TURN_FAILED|UNKNOWN)$/u.test(line) ||
+        /^\[chainchat\] native lifecycle event=(?:exit|control-close) generation=(?:\d+|UNKNOWN) code=(?:\d+|none|UNKNOWN) signal=(?:none|SIGTERM|SIGKILL|SIGINT|SIGHUP|SIGABRT|SIGSEGV|SIGBUS|SIGILL|UNKNOWN)$/u.test(line));
+      t.diagnostic(JSON.stringify({scenario, fixedRuntimeDiagnostics: fixed.slice(-16)}));
+    }
   }
   assert.equal(results[0].status, 200);
   assert.equal(results[1].status, 200);
@@ -141,6 +190,20 @@ try {
   assert.ok(results[8].calls.every(call => call.kind === 'planner'), 'Provider policy holds cannot use the optional planner fallback.');
   assert.equal(results[9].status, 422); assert.equal(results[9].code, 'COVENANT_REJECTED');
   assert.equal(results[9].answerReleased, false, 'Memory pause cannot release a low-fruit answer.');
+  for (const result of [results[5], results[6], results[9]]) {
+    assert.ok(result.calls.some(call => call.kind === 'answer'), `${result.scenario} must generate an actual candidate.`);
+    assert.ok(result.calls.some(call => call.kind === 'review'), `${result.scenario} must be held by an actual independent review.`);
+  }
+  assert.equal(results[10].code, 'PROVIDER_NO_TEXT',
+    'The explicit successful empty provider stop must be held before native fallback, never reported as a generic runtime failure.');
+  assert.equal(results[10].status, 422);
+  assert.equal(results[10].stage, 'generation');
+  assert.equal(results[10].answerReleased, false, 'An empty native reply is a generation failure, not a fabricated PoI rejection.');
+  assert.ok(results[10].calls.some(call => call.kind === 'answer'));
+  assert.equal(results[11].status, 200, 'The next chat must recover with the same connected model and settings.');
+  assert.equal(results[11].answerReleased, true);
+  assert.ok(results[11].calls.some(call => call.kind === 'answer') && results[11].calls.some(call => call.kind === 'review'),
+    'Recovery must generate and independently review a real new answer, then satisfy the active commit assertions above.');
   const selected = app.store.agents[0];
   assert.equal((await engine({ op: 'verify', root: selected.root })).verified, true);
 } finally {

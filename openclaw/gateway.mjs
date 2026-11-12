@@ -58,6 +58,18 @@ export function nativeLifecycleDiagnostic(event, generation, code, signal) {
   const safeSignal = signal === null ? 'none' : ['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGHUP', 'SIGABRT', 'SIGSEGV', 'SIGBUS', 'SIGILL'].includes(signal) ? signal : 'UNKNOWN';
   return `[chainchat] native lifecycle event=${safeEvent} generation=${safeGeneration} code=${safeCode} signal=${safeSignal}\n`;
 }
+export async function readNativeReviewedCandidate(broker, claimId, generatedText) {
+  try { return await broker.readCandidate({claimId}); }
+  catch (error) {
+    // An empty native final can have no receipt because no candidate existed.
+    // Keep the strict read (including valid media-only candidates) and change
+    // only its generic missing-receipt diagnostic. The invocation catch still
+    // prioritizes the parent's precise provider/review/authorization failure.
+    if (!generatedText?.trim() && error?.code === 'OPENCLAW_ENFORCEMENT')
+      throw fail('OpenClaw ended this turn without an approved final reply.', 'OPENCLAW_EMPTY_RESPONSE');
+    throw error;
+  }
+}
 function nativeControlWatchdogMs(requestTimeoutMs) {
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 100 || requestTimeoutMs > 600000)
     throw new TypeError('The native invocation timeout must be an integer from 100 through 600000 milliseconds.');
@@ -169,13 +181,21 @@ function inspectResponse(config, buffer) {
 // Keep the provider's explicit stop condition across the native adapter. Some
 // adapters otherwise turn a token-limited stream into a normal final reply.
 export function assertProviderCompletion(provider, buffer) {
+  let compatibleStopped = false, compatibleOutput = false;
+  const contentOutput = content => typeof content === 'string' ? !!content.trim() : Array.isArray(content) && content.some(part => {
+    if (typeof part === 'string') return !!part.trim();
+    if (!part || ['reasoning', 'thinking', 'redacted_thinking'].includes(part.type)) return false;
+    return typeof part.text === 'string' && !!part.text.trim() ||
+      typeof part.type === 'string' && !['text', 'output_text'].includes(part.type);
+  });
   const termination = code => { throw Object.assign(fail(
     code === 'PROVIDER_INCOMPLETE' ? 'The provider did not finish a complete response.'
+      : code === 'PROVIDER_NO_TEXT' ? 'The provider completed this turn without answer text or a native tool/media payload.'
       : code === 'PROVIDER_CONTENT_HELD' ? 'The provider held the model response.'
       : code === 'PROVIDER_RATE_LIMIT' ? 'The provider rate limit or quota was reached.'
       : code === 'PROVIDER_HTTP_ERROR' ? 'The provider rejected the model request.'
       : 'The provider returned an invalid or unsuccessful response.', code,
-    code === 'PROVIDER_RATE_LIMIT' ? 429 : code === 'PROVIDER_CONTENT_HELD' ? 422 : 502), { stage: 'generation' }); };
+    code === 'PROVIDER_RATE_LIMIT' ? 429 : ['PROVIDER_CONTENT_HELD', 'PROVIDER_NO_TEXT'].includes(code) ? 422 : 502), { stage: 'generation' }); };
   const providerFailure = error => {
     const codes = [error?.code, error?.type, error?.status].map(value => String(value ?? '').toLowerCase());
     if (codes.some(code => ['429', 'rate_limit_exceeded', 'rate_limit_error', 'rate_limit', 'quota_exceeded', 'insufficient_quota', 'resource_exhausted'].includes(code))) termination('PROVIDER_RATE_LIMIT');
@@ -193,6 +213,16 @@ export function assertProviderCompletion(provider, buffer) {
       if (held) termination('PROVIDER_CONTENT_HELD');
       if (reasons.some(reason => reason != null && !['stop', 'length', 'tool_calls', 'function_call'].includes(reason))) termination('PROVIDER_INVALID_RESPONSE');
       incomplete = reasons.includes('length');
+      // The pinned native adapter consumes choices[0]. A successful empty
+      // completion otherwise enters its fallback path instead of exposing a
+      // useful provider cause. Inspect only explicit stops, across all chunks;
+      // reasoning alone is not an answer. Native tools and media remain under
+      // their existing independent action/output gates.
+      const choice = choices[0];
+      if (choice?.finish_reason === 'stop') compatibleStopped = true;
+      if (['tool_calls', 'function_call'].includes(choice?.finish_reason)) compatibleOutput = true;
+      for (const message of [choice?.message, choice?.delta]) if (message && (
+        contentOutput(message.content) || message.tool_calls?.length || message.function_call || message.audio || message.images?.length)) compatibleOutput = true;
     } else if (provider === 'openai') {
       const result = value.response || value;
       if (result.error || result.status === 'failed' || value.type === 'response.failed') providerFailure(result.error);
@@ -221,6 +251,7 @@ export function assertProviderCompletion(provider, buffer) {
     }
     if (incomplete) termination('PROVIDER_INCOMPLETE');
   }
+  if (provider === 'compatible' && compatibleStopped && !compatibleOutput) termination('PROVIDER_NO_TEXT');
 }
 
 /** A private per-invocation capability can occur once in system instructions.
@@ -1502,7 +1533,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
           deliver: false, ...(attachments.length?{attachments}:{}), ...(native?.intent ? { intent: native.intent } : {}), ...(native?.goalOperation ? { goalOperation: native.goalOperation } : {}) }, controller, {allowEmptyFinal:true});
         responseComplete = true; assertCredentialIsolation(config, generated); checkServiceIsolation(generated);
         let enforcement;
-        const reviewed = typeof broker.readCandidate === 'function' ? await broker.readCandidate({claimId:claim.claimId}) : null;
+        const reviewed = typeof broker.readCandidate === 'function' ? await readNativeReviewedCandidate(broker, claim.claimId, generated.text) : null;
         if (reviewed?.receipt?.outputAssets?.length) {
           if (typeof broker.assertDisplayCandidate !== 'function') throw fail('The generated media lacks a verified display projection.','NATIVE_OUTPUT_MEDIA_HELD');
           const sdk=await import(pathToFileURL(path.join(upstream,'dist/plugin-sdk/channel-outbound.js')).href);

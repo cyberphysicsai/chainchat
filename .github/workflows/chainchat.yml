@@ -5,6 +5,12 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Full release acceptance or focused native BYOK diagnosis'
+        type: choice
+        default: full
+        options: [full, byok-reliability]
 permissions:
   contents: read
 jobs:
@@ -94,8 +100,18 @@ jobs:
           git -C "$reference" checkout --detach FETCH_HEAD
           skill="$reference/skills/codex/cypher-tempre-self-model"
           printf 'CT_PARITY_REFERENCE=%s\nCT_ORIGINAL_SKILL=%s\n' "$skill" "$skill" >> "$GITHUB_ENV"
-      - name: Run the complete Node suite with serial native runtime ownership
-        run: python -m unittest discover -s test -p test_*.py && node --test --test-concurrency=1 test/*.test.mjs
+      - name: Run focused native diagnosis or the complete release suite
+        env:
+          CT_CI_SUITE: ${{ inputs.suite }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CT_CI_SUITE" == "byok-reliability" ]]; then
+            node --test test/openclaw-reliability.integration.test.mjs
+          else
+            python -m unittest discover -s test -p test_*.py
+            node --test --test-concurrency=1 test/*.test.mjs
+          fi
       - name: Remove the temporary CI browser namespace exception
         if: always() && steps.browser_sandbox.outputs.installed == 'true'
         shell: bash
@@ -106,6 +122,7 @@ jobs:
           sudo rm -- "$profile"
           exit "$result"
   windows-installer:
+    if: github.event_name != 'workflow_dispatch' || inputs.suite != 'byok-reliability'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +145,7 @@ jobs:
           python installer/acceptance_windows.py --installer $installer --work-root (Join-Path $env:RUNNER_TEMP 'chainchat-acceptance')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   portable-installers:
+    if: github.event_name != 'workflow_dispatch' || inputs.suite != 'byok-reliability'
     name: Installer ${{ matrix.id }}
     strategy:
       fail-fast: false
@@ -144,7 +162,7 @@ jobs:
             architecture: arm64
             suffix: linux.tar.gz
           - id: macos-arm64
-            runner: macos-latest
+            runner: macos-15
             platform: darwin
             architecture: arm64
             suffix: macos.zip
