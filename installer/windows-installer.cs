@@ -60,7 +60,7 @@ namespace CypherTempreInstaller {
     public string version, url, sha256, prefix;
   }
   public sealed class Manifest {
-    public string product, version, payloadSha256, payloadPrefix, openclawVersion;
+    public string product, version, payloadSha256, payloadPrefix, openclawVersion, npmSecurityProfile;
     public Dictionary<string,string> dependencyOverrides;
     public RuntimePin node, python;
   }
@@ -282,7 +282,7 @@ namespace CypherTempreInstaller {
       }
       throw new InvalidOperationException("Too many runtime download redirects.");
     }
-    static void Extract(string archive, string target, string prefix) {
+    static void Extract(string archive, string target, string prefix, string excludedRelativePrefix = null) {
       Directory.CreateDirectory(target); RejectLinks(target);
       using (ZipArchive zip = ZipFile.OpenRead(LongPaths.Extend(archive))) {
         long expanded = 0; int count = 0; HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -290,6 +290,10 @@ namespace CypherTempreInstaller {
           if (++count > 100000 || (expanded += entry.Length) > MaxExpandedBytes || ((entry.ExternalAttributes >> 16) & 0xF000) == 0xA000) throw new InvalidOperationException("Archive exceeds limits or contains symbolic links.");
           string path = ArchivePath(target, entry.FullName, prefix); if (path == null) continue;
           if (!seen.Add(path)) throw new InvalidOperationException("Archive contains duplicate Windows paths.");
+          if(excludedRelativePrefix != null) {
+            string excluded=Path.GetFullPath(Path.Combine(target,excludedRelativePrefix));
+            if(path.Equals(excluded,StringComparison.OrdinalIgnoreCase) || path.StartsWith(excluded+"\\",StringComparison.OrdinalIgnoreCase)) continue;
+          }
           if (entry.FullName.EndsWith("/")) { Directory.CreateDirectory(path); continue; }
           Directory.CreateDirectory(Path.GetDirectoryName(path));
           using (Stream input = entry.Open()) using (FileStream output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
@@ -310,12 +314,28 @@ namespace CypherTempreInstaller {
       }
     }
     static Dictionary<string,string> EnvironmentFor(ActiveRelease release, string installRoot) {
-      return new Dictionary<string,string> { {"CT_CHAT_NODE", release.node}, {"CT_CHAT_PYTHON", release.python}, {"CT_CHAT_DATA", release.data},
+      Dictionary<string,string> projected=new Dictionary<string,string> { {"CT_CHAT_NODE", release.node}, {"CT_CHAT_PYTHON", release.python}, {"CT_CHAT_DATA", release.data},
         {"CT_OPERATOR_TRUST_ROOT", Path.Combine(release.data,"operator-approvals")},
         {"CT_OPENCLAW_MODULE", Path.Combine(release.release, "openclaw", "runtime", "node_modules", "openclaw")},
         {"PYTHONIOENCODING", "utf-8"}, {"PYTHONUTF8", "1"}, {"PYTHONDONTWRITEBYTECODE", "1"},
         {"npm_config_cache", Path.Combine(installRoot, "cache", "npm")}, {"npm_config_audit", "false"}, {"npm_config_fund", "false"},
         {"PATH", Path.GetDirectoryName(release.node) + ";" + Environment.GetEnvironmentVariable("PATH")} };
+      ProjectRuntimeOptions(projected,Environment.GetEnvironmentVariable("CT_CHAT_PORT"),Environment.GetEnvironmentVariable("CT_CHAT_NO_BROWSER"));
+      return projected;
+    }
+    static void ProjectRuntimeOptions(Dictionary<string,string> projected, string port, string noBrowser) {
+      // These owner launch preferences are the only inherited CT options.
+      // They are reprojected after the managed-child scrub, never passed through.
+      if(port != null) {
+        int number;
+        if(port.Length==0 || port.Any(c=>c<'0' || c>'9') || !Int32.TryParse(port,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out number) || number>65535)
+          throw new InvalidOperationException("CT_CHAT_PORT must be a decimal port from 0 to 65535.");
+        projected["CT_CHAT_PORT"]=number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+      }
+      if(noBrowser != null) {
+        if(noBrowser!="0" && noBrowser!="1") throw new InvalidOperationException("CT_CHAT_NO_BROWSER must be 0 or 1.");
+        projected["CT_CHAT_NO_BROWSER"]=noBrowser;
+      }
     }
     static string Quote(string value) {
       // Windows CommandLineToArgvW escaping, including trailing backslashes.
@@ -323,9 +343,29 @@ namespace CypherTempreInstaller {
       foreach(char c in value) { if(c == '\\') { slashes++; continue; } if(c == '"') { quoted.Append('\\', slashes * 2 + 1); quoted.Append(c); slashes = 0; continue; } quoted.Append('\\', slashes); slashes=0; quoted.Append(c); }
       quoted.Append('\\', slashes * 2); return quoted.Append('"').ToString();
     }
+    static void ApplyChildEnvironment(ProcessStartInfo info, Dictionary<string,string> approved) {
+      // Never let a parent preload JavaScript/Python, inject npm configuration,
+      // or pass unrelated provider credentials into setup or the owned runtime.
+      foreach(string name in info.EnvironmentVariables.Keys.Cast<string>().ToArray()) {
+        if(System.Text.RegularExpressions.Regex.IsMatch(name,"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL",System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            System.Text.RegularExpressions.Regex.IsMatch(name,"^(OPENCLAW_|CHAINCHAT_|CT_|OTEL_|SENTRY_|PYTHON|npm_config_)",System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            name.Equals("NODE_OPTIONS",StringComparison.OrdinalIgnoreCase) || name.Equals("NODE_PATH",StringComparison.OrdinalIgnoreCase) || name.Equals("__PYVENV_LAUNCHER__",StringComparison.OrdinalIgnoreCase))
+          info.EnvironmentVariables.Remove(name);
+      }
+      foreach(KeyValuePair<string,string> item in approved) info.EnvironmentVariables[item.Key]=item.Value;
+    }
+    static Dictionary<string,string> NpmInstallEnvironment(ActiveRelease active, string root) {
+      Dictionary<string,string> environment=EnvironmentFor(active,root);
+      string config=Child(active.release,".runtime\\npm-install-config"); Directory.CreateDirectory(config);
+      string user=Child(config,"user.npmrc"),global=Child(config,"global.npmrc");
+      File.WriteAllText(user,"",new UTF8Encoding(false)); File.WriteAllText(global,"",new UTF8Encoding(false));
+      environment["NPM_CONFIG_USERCONFIG"]=user; environment["NPM_CONFIG_GLOBALCONFIG"]=global;
+      environment["NPM_CONFIG_REGISTRY"]="https://registry.npmjs.org";
+      return environment;
+    }
     static void Run(string executable, string[] arguments, string directory, Dictionary<string,string> environment, int timeoutSeconds) {
       ProcessStartInfo info = new ProcessStartInfo(executable, String.Join(" ", arguments.Select(Quote))) { WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-      foreach (KeyValuePair<string,string> item in environment) info.EnvironmentVariables[item.Key] = item.Value;
+      ApplyChildEnvironment(info,environment);
       using (Process child = new Process()) {
         child.StartInfo = info; child.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if(e.Data != null) Log(e.Data); };
         child.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if(e.Data != null) Log(e.Data); };
@@ -375,7 +415,7 @@ namespace CypherTempreInstaller {
     static void Launch(ActiveRelease active, string root, bool deferBrowser = false) {
       ValidateRelease(active, root);
       ProcessStartInfo info = new ProcessStartInfo(active.node, Quote(Path.Combine(active.release,"openclaw","launcher.mjs"))) { WorkingDirectory = active.release, UseShellExecute = false, CreateNoWindow = true };
-      foreach(KeyValuePair<string,string> item in EnvironmentFor(active, root)) info.EnvironmentVariables[item.Key] = item.Value;
+      ApplyChildEnvironment(info,EnvironmentFor(active, root));
       if(deferBrowser) info.EnvironmentVariables["CT_CHAT_NO_BROWSER"] = "1";
       string failure="ChainChat could not start its local runtime. See "+Path.Combine(active.data,"launcher.log")+" for diagnostics. Check whether the local port is already in use, then open ChainChat again.";
       Process child;
@@ -451,30 +491,44 @@ namespace CypherTempreInstaller {
         Log("Step 2/4: Install verified runtimes and agent software");
         Log("Downloading and verifying Node.js " + manifest.node.version + " from nodejs.org"); Download(manifest.node,nodeZip,options.cache);
         Log("Downloading and verifying CPython " + manifest.python.version + " from python.org"); Download(manifest.python,pythonZip,options.cache);
-        string node = Path.Combine(root,"runtimes","node-"+manifest.node.version+"-"+manifest.node.sha256.Substring(0,12));
-        if(!Directory.Exists(node)) { string stage=node+".stage-"+Guid.NewGuid().ToString("N"); Extract(nodeZip,stage,manifest.node.prefix); Directory.Move(stage,node); }
-        VerifyArchiveFiles(nodeZip,node,manifest.node.prefix,null);
+        if(manifest.npmSecurityProfile == null || manifest.npmSecurityProfile.Length != 64 || manifest.npmSecurityProfile.Any(c => !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f')))
+          throw new InvalidOperationException("The reviewed npm security profile is missing.");
+        string node = Path.Combine(root,"runtimes","node-"+manifest.node.version+"-"+manifest.node.sha256.Substring(0,12)+"-npm-"+manifest.npmSecurityProfile.Substring(0,12));
         string release = Path.Combine(root,"releases",manifest.version+"-"+manifest.payloadSha256.Substring(0,12));
         ActiveRelease active = new ActiveRelease {product=Product,version=manifest.version,release=release,node=Path.Combine(node,"node.exe"),python=Path.Combine(release,".runtime","python","python.exe"),data=Path.Combine(root,"data"),payloadSha256=manifest.payloadSha256};
         if(!Directory.Exists(release)) {
           string stage=release+".stage-"+Guid.NewGuid().ToString("N"); Log("Staging ChainChat " + manifest.version); Extract(payload,stage,manifest.payloadPrefix);
           Extract(pythonZip,Path.Combine(stage,".runtime","python"),manifest.python.prefix);
-          File.WriteAllText(Path.Combine(stage,".runtime","python","python315._pth"),"python315.zip\n.\n"+release+"\n"+Path.Combine(release,"engine","proof-of-interaction")+"\nimport site\n",new UTF8Encoding(false));
+          File.WriteAllText(Path.Combine(stage,".runtime","python","python315._pth"),"python315.zip\n.\n"+release+"\n"+Path.Combine(release,"engine","proof-of-interaction")+"\n",new UTF8Encoding(false));
           Directory.CreateDirectory(Path.GetDirectoryName(release)); Directory.Move(stage,release);
         }
         VerifyArchiveFiles(payload,release,manifest.payloadPrefix,null);
+        // Verify the portable Python before it prepares or checks secured npm.
+        VerifyArchiveFiles(pythonZip,Path.Combine(release,".runtime","python"),manifest.python.prefix,new HashSet<string>{"python315._pth"});
+        string expectedPythonPath="python315.zip\n.\n"+release+"\n"+Path.Combine(release,"engine","proof-of-interaction")+"\n";
+        if(File.ReadAllText(Path.Combine(release,".runtime","python","python315._pth")) != expectedPythonPath) throw new InvalidOperationException("The embedded Python import path changed; reinstall the reviewed release.");
+        Dictionary<string,string> bootstrapEnvironment=EnvironmentFor(active,root);
+        if(!Directory.Exists(node)) {
+          string stage=node+".stage-"+Guid.NewGuid().ToString("N");
+          // Old Node npm bytes are never extracted or executed. The Python
+          // helper fills this subtree with exact, fully patched npm bytes.
+          Extract(nodeZip,stage,manifest.node.prefix,"node_modules\\npm");
+          Log("Preparing verified secured npm before dependency installation");
+          Run(active.python,new [] {"-B",Path.Combine(release,"installer","bootstrap_npm.py"),"prepare","--application",release,"--install-root",root,"--node-home",stage,"--archive",nodeZip,"--platform","windowsX64","--cache",Path.Combine(root,"cache","security-overlays")},release,bootstrapEnvironment,300);
+          Directory.Move(stage,node);
+        } else {
+          Log("Verifying the existing secured Node/npm runtime");
+          Run(active.python,new [] {"-B",Path.Combine(release,"installer","bootstrap_npm.py"),"verify","--application",release,"--install-root",root,"--node-home",node,"--archive",nodeZip,"--platform","windowsX64","--cache",Path.Combine(root,"cache","security-overlays")},release,bootstrapEnvironment,300);
+        }
         if(!File.Exists(Path.Combine(release,"installed.json"))) {
-          Dictionary<string,string> environment=EnvironmentFor(active,root);
+          Dictionary<string,string> environment=NpmInstallEnvironment(active,root);
           string npm=Path.Combine(node,"node_modules","npm","bin","npm-cli.js");
           Log("Installing locked ChainChat dependencies (registry.npmjs.org)"); Run(active.node,new [] {npm,"ci","--omit=dev","--ignore-scripts"},release,environment,1800);
           Log("Installing pinned OpenClaw " + manifest.openclawVersion + " and locked dependencies"); Run(active.node,new [] {npm,"ci","--omit=dev","--ignore-scripts"},Path.Combine(release,"openclaw","runtime"),environment,2400);
-          Log("Applying verified same-major bundled security archives"); Run(active.python,new [] {Path.Combine(release,"installer","security_overlays.py"),"--application",release,"--cache",Path.Combine(root,"cache","security-overlays")},release,environment,180);
-          Log("Applying exact native hook metadata compatibility overlay"); Run(active.python,new [] {Path.Combine(release,"installer","runtime_compatibility.py"),"--application",release},release,environment,60);
+          Log("Applying complete verified dependency security overlays"); Run(active.python,new [] {"-B",Path.Combine(release,"installer","security_overlays.py"),"--application",release,"--cache",Path.Combine(root,"cache","security-overlays")},release,environment,240);
+          Log("Applying exact native hook metadata compatibility overlay"); Run(active.python,new [] {"-B",Path.Combine(release,"installer","runtime_compatibility.py"),"--application",release},release,environment,60);
           AtomicJson(Path.Combine(release,"installed.json"),new {product=Product,payloadSha256=manifest.payloadSha256,openclawVersion=manifest.openclawVersion});
         }
-        VerifyArchiveFiles(pythonZip,Path.Combine(release,".runtime","python"),manifest.python.prefix,new HashSet<string>{"python315._pth"});
-        string expectedPythonPath="python315.zip\n.\n"+release+"\n"+Path.Combine(release,"engine","proof-of-interaction")+"\nimport site\n";
-        if(File.ReadAllText(Path.Combine(release,".runtime","python","python315._pth")) != expectedPythonPath) throw new InvalidOperationException("The embedded Python import path changed; reinstall the reviewed release.");
         string packageFile=Path.Combine(release,"openclaw","runtime","node_modules","openclaw","package.json");
         Dictionary<string,object> package=Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(packageFile));
         if(Convert.ToString(package["version"]) != manifest.openclawVersion) throw new InvalidOperationException("Installed OpenClaw version differs from its pinned release.");
@@ -541,6 +595,26 @@ namespace CypherTempreInstaller {
         string traversal=Path.Combine(root,"traversal.zip");
         using(ZipArchive zip=ZipFile.Open(traversal,ZipArchiveMode.Create)) zip.CreateEntry("../escape.txt");
         bool traversalRefused=false; try {Extract(traversal,Path.Combine(root,"traversal"),"");} catch(InvalidOperationException) {traversalRefused=true;} if(!traversalRefused || File.Exists(Path.Combine(root,"escape.txt"))) throw new Exception("Traversal archive wrote outside extraction root.");
+        string nodeArchive=Path.Combine(root,"node-fixture.zip"),securedNode=Path.Combine(root,"secured-node");
+        using(ZipArchive zip=ZipFile.Open(nodeArchive,ZipArchiveMode.Create)) {
+          using(StreamWriter output=new StreamWriter(zip.CreateEntry("node-fixture/node.exe").Open())) output.Write("original node");
+          using(StreamWriter output=new StreamWriter(zip.CreateEntry("node-fixture/npm.cmd").Open())) output.Write("original wrapper");
+          using(StreamWriter output=new StreamWriter(zip.CreateEntry("node-fixture/node_modules/npm/bin/npm-cli.js").Open())) output.Write("old npm must not be extracted");
+        }
+        Extract(nodeArchive,securedNode,"node-fixture/","node_modules\\npm");
+        if(!File.Exists(Path.Combine(securedNode,"node.exe")) || !File.Exists(Path.Combine(securedNode,"npm.cmd")) || Directory.Exists(Path.Combine(securedNode,"node_modules","npm")))
+          throw new Exception("Secured Node staging did not omit precisely its old npm tree.");
+        ProcessStartInfo isolated=new ProcessStartInfo();
+        foreach(string name in new[]{"NODE_OPTIONS","NODE_PATH","PYTHONPATH","PYTHONINSPECT","OPENCLAW_CUSTOM","CT_UNREVIEWED","CT_CHAT_PORT","CT_CHAT_NO_BROWSER","npm_config_userconfig","provider_API_KEY"}) isolated.EnvironmentVariables[name]="unreviewed parent value";
+        Dictionary<string,string> approved=new Dictionary<string,string>{{"CT_CHAT_NODE","owned node"},{"NPM_CONFIG_REGISTRY","https://registry.npmjs.org"},{"PYTHONUTF8","1"}};
+        ProjectRuntimeOptions(approved,"41023","1"); ApplyChildEnvironment(isolated,approved);
+        foreach(string name in new[]{"NODE_OPTIONS","NODE_PATH","PYTHONPATH","PYTHONINSPECT","OPENCLAW_CUSTOM","CT_UNREVIEWED","npm_config_userconfig","provider_API_KEY"}) if(isolated.EnvironmentVariables.ContainsKey(name)) throw new Exception("An inherited startup/configuration secret reached a managed child.");
+        if(isolated.EnvironmentVariables["CT_CHAT_NODE"]!="owned node" || isolated.EnvironmentVariables["NPM_CONFIG_REGISTRY"]!="https://registry.npmjs.org" || isolated.EnvironmentVariables["PYTHONUTF8"]!="1") throw new Exception("The owned child projection was removed.");
+        if(isolated.EnvironmentVariables["CT_CHAT_PORT"]!="41023" || isolated.EnvironmentVariables["CT_CHAT_NO_BROWSER"]!="1") throw new Exception("The owner's safe port/browser preference was lost during scrubbing.");
+        foreach(string port in new[]{"0","65535","00080"}) {Dictionary<string,string> selected=new Dictionary<string,string>(); ProjectRuntimeOptions(selected,port,"0"); if(selected["CT_CHAT_PORT"]!=Int32.Parse(port).ToString() || selected["CT_CHAT_NO_BROWSER"]!="0") throw new Exception("A valid owner runtime preference was not preserved.");}
+        Dictionary<string,string> omitted=new Dictionary<string,string>(); ProjectRuntimeOptions(omitted,null,null); if(omitted.Count!=0) throw new Exception("Absent owner runtime preferences were invented.");
+        foreach(string port in new[]{"","-1","65536","1.5","+1"," 1","localhost:8790"}) {bool refused=false; try {ProjectRuntimeOptions(new Dictionary<string,string>(),port,null);} catch(InvalidOperationException) {refused=true;} if(!refused) throw new Exception("An invalid owner port was accepted.");}
+        foreach(string browser in new[]{"","2","false","yes"}) {bool refused=false; try {ProjectRuntimeOptions(new Dictionary<string,string>(),null,browser);} catch(InvalidOperationException) {refused=true;} if(!refused) throw new Exception("An invalid owner browser preference was accepted.");}
         string atomic=Path.Combine(root,"atomic.json"); AtomicJson(atomic,new {value=1}); AtomicJson(atomic,new {value=2});
         if(!File.ReadAllText(atomic).Contains("\"value\":2")) throw new Exception("Atomic state replacement failed.");
       } finally {

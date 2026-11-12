@@ -27,6 +27,15 @@ pip package, sudo, system service or PATH modification is needed. Initial setup
 requires Internet access and curl or wget. Runtime licenses/notices remain in the
 installed upstream archives.
 
+Verified Python prepares the pinned npm archive with the committed security
+fixes before any dependency installation. Node's original npm subtree is not
+extracted. A new security-profile-specific Node directory contains the fixed
+npm; previous runtime directories remain intact. Repeated setup verifies Node's
+original non-npm files/links and every file of the secured npm tree. No mutable
+installation receipt substitutes for those checks. The installed runtime also
+attests the npm and embedded Zod backports before native startup; see
+[security details](../openclaw/SECURITY.md).
+
 Supported binary baselines follow the pinned Node release: **macOS 13.5+**, and
 **Linux kernel 4.18+/glibc 2.28+** on ARM64/x64. Alpine/musl and 32-bit Linux are
 not claimed. The installer downloads prebuilt runtimes; it does not install

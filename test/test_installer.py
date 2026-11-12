@@ -24,6 +24,8 @@ class InstallerSourceTests(unittest.TestCase):
             "server.mjs": "// fixture", "engine_bridge.py": "# fixture", "openclaw/launcher.mjs": "// fixture",
             "installer/windows-installer.cs": "// fixture", "installer/windows.manifest": "<fixture/>",
             "installer/security_overlays.py": "# reviewed fixture",
+            **{name: '# reviewed security fixture' for name in ('installer/bootstrap_npm.py', 'installer/npm_security.py', 'installer/zod_security_overlay.py')},
+            **{name: '// reviewed security fixture' for name in ('openclaw/runtime-security.mjs', 'openclaw/npm-security.mjs', 'openclaw/zod-security.mjs')},
             "installer/runtime_compatibility.py": "# reviewed compatibility fixture", "openclaw/runtime-compatibility.mjs": "// compatibility fixture",
             "public/fonts/orbitron/Orbitron-Variable.ttf": "font fixture",
             "openclaw/upstream-lock.json": json.dumps(self.pins),

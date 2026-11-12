@@ -6,7 +6,7 @@ This local application includes the complete Proof of Interaction engine. Its mo
 
 ## OpenClaw edition
 
-ChainChat runs pinned **OpenClaw 2026.11.3** with a Cypher Tempre enforcement plugin and narrowly verified runtime compatibility and API-key policy overlays. Its full-width chat and single-row ability bar pilot the maintained [Proof of Interaction skill](https://github.com/cyberphysicsai/proof-of-interaction). The packaged 69-file PoI skill bundle is byte-identical to its canonical OpenClaw edition; its cognitive-engine code remains unchanged.
+ChainChat runs pinned **OpenClaw 2026.11.3** with a Cypher Tempre enforcement plugin and narrowly verified runtime compatibility, API-key policy and dependency security overlays. Its full-width chat and single-row ability bar pilot the maintained [Proof of Interaction skill](https://github.com/cyberphysicsai/proof-of-interaction). The packaged 69-file PoI skill bundle is byte-identical to its canonical OpenClaw edition; its cognitive-engine code remains unchanged.
 
 The original OpenClaw npm archive retains its official integrity digest. After extraction, compatibility overlay v2 forwards the existing `inputProvenance` and `currentSourceTurnId` fields through the same two early runtime context boundaries. Native provenance identifies asynchronous producers; the framework's original client nonce correlates queued requests before mandatory context assembly. Exact pre-patch and post-patch file hashes are required; unknown bytes and earlier overlay output are refused. The overlay adds no model, action or safety logic. Completion text and transport acknowledgments grant no authority. Installer and doctor checks verify the overlay on every supported OS. Upstream upgrades must refresh this exact compatibility attestation and pass the runtime and installer checks again.
 
@@ -20,13 +20,13 @@ External host tools are disabled by default. The native capability controls list
 
 Automatic native metadata utilities, including Activity recaps, are off by default. An owner may enable an API-key-backed utility model through the native-settings grant. Utility calls have no action tools. Chat replies, continuations and tool actions retain canonical PoI enforcement.
 
-Pinned dependency security overlays accompany the provenance compatibility overlay. Known upstream bundled-library audit findings remain; see [the security boundary and residual risks](openclaw/SECURITY.md).
+Exact-hash security backports cover embedded Zod and npm’s private Glob/Minimatch copies. Installers replace Node’s older npm with a fully verified and patched tree before any dependency installation, under a new security-profile directory. The raw upstream lock retains its original version metadata, so its audit findings remain visible alongside the installed-file remediation evidence; see [the security boundary and backports](openclaw/SECURITY.md).
 
 ## Install on Windows, macOS or Linux
 
-Download **CypherTempre-ChainChat-Setup-1.0.5-windows-x64.exe** from the [ChainChat release](https://github.com/cyberphysicsai/chainchat/releases/tag/v1.0.5) and run it. Choose **Install ChainChat** in the welcome screen. Setup installs verified portable Node/Python runtimes, OpenClaw, the PoI skill/plugin and locked dependencies for the current user. It creates a Start Menu shortcut, starts the local app and waits for authenticated runtime readiness. Choose **Open setup** to finish model, Timechain and readiness checks in the connected browser guide. There is no separate bridge installation, terminal command, manual skill activation or pairing code in the normal installed workflow. No administrator rights or global runtime installation are needed. First setup requires Internet access. The executable is not Authenticode-signed; release hashes and the open build source are supplied.
+Download **CypherTempre-ChainChat-Setup-1.0.6-windows-x64.exe** from the [ChainChat release](https://github.com/cyberphysicsai/chainchat/releases/tag/v1.0.6) and run it. Choose **Install ChainChat** in the welcome screen. Setup installs verified portable Node/Python runtimes, OpenClaw, the PoI skill/plugin and locked dependencies for the current user. It creates a Start Menu shortcut, starts the local app and waits for authenticated runtime readiness. Choose **Open setup** to finish model, Timechain and readiness checks in the connected browser guide. There is no separate bridge installation, terminal command, manual skill activation or pairing code in the normal installed workflow. No administrator rights or global runtime installation are needed. First setup requires Internet access. The executable is not Authenticode-signed; release hashes and the open build source are supplied.
 
-The landing page has separate Windows, macOS and Linux install buttons. On macOS, extract **CypherTempre-ChainChat-Setup-1.0.5-macos.zip** and open **Install ChainChat.command**. On Linux, extract **CypherTempre-ChainChat-Setup-1.0.5-linux.tar.gz** and open **Install ChainChat.sh**. Both select x64 or ARM64 automatically, download hash-pinned portable Node and Python, and install a per-user application launcher. macOS requires 13.5+; Linux requires kernel 4.18+ and glibc 2.28+. No sudo is used. macOS installers are not notarized; ordinary OS launch confirmations still apply. See [portable installer details](installer/POSIX.md).
+The landing page has separate Windows, macOS and Linux install buttons. On macOS, extract **CypherTempre-ChainChat-Setup-1.0.6-macos.zip** and open **Install ChainChat.command**. On Linux, extract **CypherTempre-ChainChat-Setup-1.0.6-linux.tar.gz** and open **Install ChainChat.sh**. Both select x64 or ARM64 automatically, download hash-pinned portable Node and Python, and install a per-user application launcher. macOS requires 13.5+; Linux requires kernel 4.18+ and glibc 2.28+. No sudo is used. macOS installers are not notarized; ordinary OS launch confirmations still apply. See [portable installer details](installer/POSIX.md).
 
 Versioned application releases are separate from persistent `data/`. Existing external Timechains stay in their original directories. Setup checks a release before activation and retains the previous application files. Recognized native database upgrades run the pinned OpenClaw Doctor offline before startup, automatically, after a verified private backup of the owned OpenClaw state, configuration, authentication and workspace notes. Fresh or current databases skip repair; unknown schemas, changed ownership and failed or interrupted repairs hold startup. Normal PoI health checks still follow migration. These backups can contain plaintext native credentials and must remain private. An older runtime may not read the upgraded database: selecting an earlier application alone is not a safe downgrade; recovery may require the matching pre-upgrade native backup. See [installer/README.md](installer/README.md) for installation details and [openclaw/UPSTREAM.md](openclaw/UPSTREAM.md) for tested upstream updates.
 
@@ -63,13 +63,17 @@ The guide stores no credentials or completion marker in browser storage.
 Use Node **24.22.3+ within 24.x, or 26.13.1+**, and Python 3.10+. Install both locked dependency sets; no Python packages are needed.
 
 ```sh
-npm ci --ignore-scripts
-npm ci --ignore-scripts --prefix openclaw/runtime
+python -c "from pathlib import Path; Path('.local').mkdir(exist_ok=True)"
+python installer/bootstrap_npm.py prepare-npm --application . --cache .local/install-cache --destination .local/secured-npm
+node .local/secured-npm/bin/npm-cli.js ci --ignore-scripts
+node .local/secured-npm/bin/npm-cli.js ci --ignore-scripts --prefix openclaw/runtime
 python installer/security_overlays.py --application . --cache .local/install-cache
 python installer/runtime_compatibility.py --application .
 node openclaw/launcher.mjs --check
-npm start
+node openclaw/launcher.mjs
 ```
+
+The secured-npm destination must be new; for a later source setup, choose a fresh destination and use its CLI path. The normal installers handle this automatically.
 
 The launcher opens **http://127.0.0.1:8790** with an expiring one-use owner-authorized link. A subsequent launch reopens the running instance with a new link. The actual PoI skill is supplied automatically to active Timechain turns. Then:
 

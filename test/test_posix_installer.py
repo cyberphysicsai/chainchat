@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -20,6 +21,31 @@ import build_posix
 
 
 class PortableInstallerGuards(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'POSIX portable-Python startup acceptance runs in native CI.')
+    def test_managed_python_environment_blocks_user_site_startup_code(self):
+        with tempfile.TemporaryDirectory(prefix='ct-user-site-') as directory:
+            base = Path(directory)
+            env = {**os.environ, 'PYTHONUSERBASE': str(base / 'user-base')}
+            env.pop('PYTHONNOUSERSITE', None)
+            env.pop('PYTHONPATH', None)
+            site = Path(subprocess.check_output([sys.executable, '-S', '-c',
+                'import site; print(site.getusersitepackages())'], env=env, text=True).strip())
+            self.assertTrue(site.is_relative_to(base))
+            site.mkdir(parents=True)
+            (site / 'usercustomize.py').write_text("print('UNREVIEWED_USER_SITE')\n", encoding='utf-8')
+            command = [sys.executable, '-c', "print('MAIN_SCRIPT')"]
+            negative = subprocess.check_output(command, env=env, text=True)
+            self.assertIn('UNREVIEWED_USER_SITE', negative)
+            active = {'release': str(base), 'data': str(base / 'data'),
+                      'python': sys.executable, 'node': str(base / 'node')}
+            with mock.patch.dict(os.environ, env, clear=True):
+                safe = installer.environment(active)
+            self.assertEqual(safe['PYTHONNOUSERSITE'], '1')
+            safe['PYTHONUSERBASE'] = env['PYTHONUSERBASE']
+            positive = subprocess.check_output(command, env=safe, text=True)
+            self.assertNotIn('UNREVIEWED_USER_SITE', positive)
+            self.assertIn('MAIN_SCRIPT', positive)
+
     def test_guided_progress_does_not_claim_chat_readiness_or_pollute_json_output(self):
         args = mock.Mock(quiet=False, no_launch=False)
         progress, result = io.StringIO(), io.StringIO()
@@ -59,6 +85,8 @@ class PortableInstallerGuards(unittest.TestCase):
             'installer/windows.manifest': b'<fixture/>', 'public/fonts/orbitron/Orbitron-Variable.ttf': b'fixture',
             'installer/posix_install.py': b'# only the reviewed archive copy\n',
             'installer/security_overlays.py': b'# reviewed security fixture\n',
+            **{name: b'# reviewed security fixture\n' for name in ('installer/bootstrap_npm.py', 'installer/npm_security.py', 'installer/zod_security_overlay.py')},
+            **{name: b'// reviewed security fixture\n' for name in ('openclaw/runtime-security.mjs', 'openclaw/npm-security.mjs', 'openclaw/zod-security.mjs')},
             'installer/runtime_compatibility.py': b'# reviewed compatibility fixture\n', 'openclaw/runtime-compatibility.mjs': b'// reviewed compatibility fixture\n',
             'installer/posix_bootstrap.sh': (ROOT / 'installer/posix_bootstrap.sh').read_bytes().replace(
                 b'# Generated setup', b'# REVIEWED_ARCHIVE_MARKER\n# Generated setup')}

@@ -14,7 +14,7 @@ import tarfile
 import urllib.parse
 import zipfile
 
-from build_windows import inspect_payload
+from build_windows import inspect_payload, security_fields, SECURITY_FIELDS
 
 
 def gz_tar(files):
@@ -55,7 +55,7 @@ def build(source, directory, platform_name):
         'platform': platform_name, 'payloadPrefix': prefix,
         'payloadSha256': hashlib.sha256(source.read_bytes()).hexdigest(), 'runtimes': runtimes,
         'openclawVersion': pins['openclaw']['version'], 'dependencyOverrides': pins.get('dependencyOverrides', {}), 'bundledDependencyOverlays': pins.get('bundledDependencyOverlays', []),
-        'runtimeCompatibilityOverlays':pins.get('runtimeCompatibilityOverlays',[])}
+        'runtimeCompatibilityOverlays':pins.get('runtimeCompatibilityOverlays',[]), **security_fields(pins)}
     bundle = gz_tar({'manifest.json': (json.dumps(manifest, sort_keys=True).encode(), 0o600),
         'payload.zip': (source.read_bytes(), 0o600), 'posix_install.py': (common, 0o600)})
     script = bootstrap.replace('@PLATFORM@', platform_name).replace('@RUNTIME_CASES@', '\n'.join(cases)).replace(
@@ -94,6 +94,7 @@ def build(source, directory, platform_name):
             'openclawVersion': manifest['openclawVersion'], 'dependencyOverrides': manifest['dependencyOverrides'],
             'bundledDependencyOverlays': manifest['bundledDependencyOverlays'],
             'runtimeCompatibilityOverlays':manifest['runtimeCompatibilityOverlays'],
+            **{name: manifest[name] for name in SECURITY_FIELDS},
             'runtimes': runtimes, 'publisherSigned': False, 'requiresAdministrator': False,
             'networkNeededForFirstInstall': True}
         output.with_name(output.name + '.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')

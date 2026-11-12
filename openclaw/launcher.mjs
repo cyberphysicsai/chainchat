@@ -6,7 +6,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import {assertRuntimeCompatibility} from './runtime-compatibility.mjs';
+import {assertManagedRuntime} from './runtime-security.mjs';
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -55,7 +55,7 @@ async function doctor() {
     bundledDependencies['npm/' + name] = actual.version;
   }
   await fs.access(path.join(packageRoot, 'openclaw.mjs'));
-  const runtimeCompatibilityOverlays=await assertRuntimeCompatibility(packageRoot);
+  const runtimeSecurity=await assertManagedRuntime(packageRoot);
   await fs.access(path.join(root, 'openclaw/plugin/index.mjs'));
   await exec(python, ['-c', 'import sys; assert sys.version_info >= (3,10); import engine_bridge; print("native-engine-ok")'],
     { cwd: root, env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONUTF8: '1' }, windowsHide: true, timeout: 30_000, maxBuffer: 16384 });
@@ -64,7 +64,7 @@ async function doctor() {
     const actual = createHash('sha256').update(await fs.readFile(path.join(root, 'engine/proof-of-interaction', relative))).digest('hex');
     if (actual !== expected) throw new Error('The installed native engine differs from the packaged integrity manifest.');
   }
-  return { version: packageInfo.version, openclaw: upstream.version, node: process.versions.node, nativeFiles: Object.keys(files).length, dependencies, bundledDependencies,runtimeCompatibilityOverlays };
+  return { version: packageInfo.version, openclaw: upstream.version, node: process.versions.node, nativeFiles: Object.keys(files).length, dependencies, bundledDependencies,...runtimeSecurity };
 }
 export function verifiedLaunchUrl(candidate, expectedUi) {
   if (typeof expectedUi !== 'string' || !/^http:\/\/127\.0\.0\.1:[0-9]{1,5}\/$/.test(expectedUi))

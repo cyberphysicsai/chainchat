@@ -5,7 +5,7 @@ import {constants} from 'node:fs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createHash, randomUUID} from 'node:crypto';
-import {assertRuntimeCompatibility} from './runtime-compatibility.mjs';
+import {assertManagedRuntime} from './runtime-security.mjs';
 
 const execute = promisify(execFile), tickets = new WeakMap();
 const PIN = '2026.11.3', MAX_FILES = 20000, MAX_BYTES = 2 * 1024 ** 3;
@@ -185,7 +185,7 @@ function receiptPath(directory){return path.join(path.dirname(directory),'.'+pat
 async function assertPin(packageRoot) {
   const info=JSON.parse(await fs.readFile(path.join(packageRoot,'package.json'),'utf8'));
   if(info.name!=='openclaw'||info.version!==PIN)throw error();
-  await assertRuntimeCompatibility(packageRoot);
+  await assertManagedRuntime(packageRoot);
 }
 export async function prepareNativeUpgrade({directory,packageRoot,nodePath=process.execPath,onDiagnostic,runCommand=command,verifyRuntime=assertPin}={}) {
   try {

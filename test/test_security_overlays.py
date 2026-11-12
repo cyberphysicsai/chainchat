@@ -1,10 +1,13 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import py_compile
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('security_overlays', ROOT / 'installer/security_overlays.py')
@@ -12,6 +15,22 @@ overlay = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(overlay)
 
 class SecurityOverlayTests(unittest.TestCase):
+    def test_payload_helper_loads_source_instead_of_matching_unverified_bytecode(self):
+        with tempfile.TemporaryDirectory(prefix='ct-source-helper-') as directory:
+            source = Path(directory) / 'npm_security.py'
+            source.write_text("MARKER = 'evil'\n", encoding='utf-8')
+            py_compile.compile(str(source), doraise=True)
+            before = source.stat()
+            source.write_text("MARKER = 'safe'\n", encoding='utf-8')
+            os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+            spec = importlib.util.spec_from_file_location('negative_control', source)
+            negative = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(negative)
+            self.assertEqual(negative.MARKER, 'evil')
+            with mock.patch.object(overlay, '__file__', str(Path(directory) / 'security_overlays.py')):
+                self.assertEqual(overlay._source_helper('npm_security').MARKER, 'safe')
+                with self.assertRaises(ValueError): overlay._source_helper('../outside')
+
     def test_missing_bundled_commitment_holds_before_creating_cache(self):
         with tempfile.TemporaryDirectory(prefix='ct-overlay-test-') as directory:
             application = Path(directory)

@@ -11,6 +11,15 @@ provider login and suppresses native auth-status usage probing. The MIT license 
 package. The canonical Timechain engine has its own
 independent source commitment and compatibility tests.
 
+Two security backports have separate installed-file commitments:
+`runtimeSecurityOverlays` covers the 18 embedded Zod files, while
+`npmSecurityOverlays` covers ten files in npm's private dependency tree.
+The Glob default-entry shims use its same-version raw exports; its raw walker
+and standalone Minimatch retain the existing APIs with reviewed upstream fixes.
+Original archives, package version metadata and licenses remain available.
+Doctor, offline migration and Gateway startup attest every patched file before
+native execution. See [the remediation evidence](SECURITY.md).
+
 `upstream-lock.json` records the exact OpenClaw version and npm integrity. The
 runtime `package.json` and `package-lock.json` must agree with that commitment.
 `dependencyOverrides` records reviewed exact dependency patches applied through
@@ -21,6 +30,14 @@ dependency archives for copies bundled inside npm. The installer verifies both
 npm SRI and SHA-256 before safe extraction, executes no package scripts, and
 doctor checks the final installed copies. Keep the published npm lock evidence
 intact and report these installed replacements separately from its raw audit.
+`bootstrapNpm` pins the official npm archive by SRI and SHA-256. Verified Python
+constructs the patched npm before the first dependency installation, without
+extracting Node's original npm subtree. `npmSecurityProfile` is SHA-256 over the
+canonical sorted JSON of `bootstrapNpm`, `bundledDependencyOverlays` and
+`npmSecurityOverlays`. Its prefix selects a new portable Node directory; do not
+rewrite another release's runtime directory. Repeat setup verifies the entire
+replacement tree against freshly reconstructed expected bytes. CI and source
+installation also use this secured CLI.
 The Windows, macOS and Linux Node/CPython versions and archive SHA-256 values are pinned
 in the same file. Setup refuses a different upstream version or damaged archive.
 Windows uses the official embeddable CPython 3.15.2 archive. macOS and Linux
@@ -55,6 +72,11 @@ An update is a reviewed release, not an unattended merge of executable code:
    Review every dependency override against the new upstream release; remove it
    only when the resulting locked dependency is patched and verified.
    Preserve or deliberately revise the exact downstream dependency overlay.
+   Re-inventory embedded and default compiled entry points, not only package
+   manifests. Keep backport helper constants, both startup verifiers, lock
+   descriptors and the derived npm security profile consistent. Remove a
+   backport only when every relevant executable copy includes the fix, and
+   retest hostile input plus normal behavior through both default/raw exports.
    Run `npm audit --omit=dev`, inspect embedded library versions, and review the
    residual notices in `SECURITY.md`; external overrides do not fix embedded code.
 3. Run plugin hook-contract tests and a real gateway smoke test with local model

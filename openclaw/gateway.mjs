@@ -24,7 +24,7 @@ import {parseNativeMediaCompletion} from '../lib/native-media-completion.mjs';
 import {NativeSecrets} from '../lib/native-secrets.mjs';
 import {createNativeHeartbeatScratch,readNativeHeartbeatMonitor} from '../lib/native-heartbeat-scratch.mjs';
 import {waitForNativeSessionIdle} from '../lib/native-session-idle.mjs';
-import {assertRuntimeCompatibility} from './runtime-compatibility.mjs';
+import {assertManagedRuntime} from './runtime-security.mjs';
 import {isRemovedNativeModel, isRemovedNativeProvider, modelRouteForConfig} from './plugin/model-route.mjs';
 import {prepareNativeUpgrade,completeNativeUpgrade} from './native-upgrade.mjs';
 import {createNativeControlConnection,stopNativeControlClient} from './native-control-connection.mjs';
@@ -337,7 +337,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
   toolsPolicy = { profile: "full", deny: [] }, startupTimeoutMs = 180000, requestTimeoutMs = 240000,
   fetchImpl = fetch, spawnImpl = spawn, onDiagnostic, browserService, serviceEnvironment = () => ({}), serviceSecrets = () => [],
   nativeCapabilities = () => null, resolveNativeOwner,resolveNativeModelRoute, deferNativeSources=false, mediaDirectory, mediaRoot=mediaDirectory, modelContextTokens,
-  runtimeCompatibilityCheck=assertRuntimeCompatibility } = {}) {
+  runtimeCompatibilityCheck=assertManagedRuntime } = {}) {
   if (!stateDir || !packageRoot || !pluginPath || !broker || typeof broker.registerInvocation !== "function" ||
       typeof broker.assertCandidate !== "function") throw new TypeError("A local OpenClaw runtime, plugin and enforcement broker are required.");
   if (modelContextTokens !== undefined && (!Number.isSafeInteger(modelContextTokens) || modelContextTokens < 16384 || modelContextTokens > 131072))
@@ -569,6 +569,11 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       await stopping;
       assertRunningAllowed(epoch);
       runtimeHealth.starting(childGeneration + 1);
+      const manifest = JSON.parse(await fs.readFile(path.join(upstream, "package.json"), "utf8"));
+      if (manifest.name !== "openclaw" || manifest.version !== OPENCLAW_VERSION)
+        throw fail(`Install the pinned OpenClaw ${OPENCLAW_VERSION} runtime.`, "OPENCLAW_VERSION_MISMATCH");
+      // Security patches are checked before any native Doctor/SDK execution.
+      await runtimeCompatibilityCheck(upstream);
       await initializeModelCapabilities(); await initializeNativeProviders();
       assertRunningAllowed(epoch);
       // Capture an old native installation before any supervisor configuration
@@ -577,10 +582,6 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       identity ||= await supervisorIdentity(directory);
       gatewayToken = identity.gatewayToken; proxyToken = identity.proxyToken;
       const runtimeState = path.join(directory, "native-state");
-      const manifest = JSON.parse(await fs.readFile(path.join(upstream, "package.json"), "utf8"));
-      if (manifest.name !== "openclaw" || manifest.version !== OPENCLAW_VERSION)
-        throw fail(`Install the pinned OpenClaw ${OPENCLAW_VERSION} runtime.`, "OPENCLAW_VERSION_MISMATCH");
-      await runtimeCompatibilityCheck(upstream);
       const brokerUrl = new URL(broker.url);
       if (brokerUrl.protocol !== "http:" || brokerUrl.hostname !== "127.0.0.1" || brokerUrl.username || brokerUrl.password || brokerUrl.search || brokerUrl.hash || !broker.token)
         throw fail("The enforcement broker must be an authenticated loopback service.", "OPENCLAW_BROKER_CONFIG");
