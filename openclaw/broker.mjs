@@ -2,7 +2,7 @@ import http from 'node:http';
 import { randomBytes, createHash, timingSafeEqual, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { assertCredentialIsolation, FRUITS, DIMENSIONS } from '../lib/providers.mjs';
+import { assertCredentialIsolation, FRUITS, DIMENSIONS, REVIEW_THRESHOLD, RESPONSE_REVIEW_THRESHOLD } from '../lib/providers.mjs';
 import { validateToolAuthority, authorizeToolCall } from '../lib/tool-authority.mjs';
 import { createCompactionBroker } from './compaction-broker.mjs';
 import { validateManagedServiceTool } from '../lib/managed-service-tools.mjs';
@@ -377,7 +377,7 @@ export function createPoIBroker({ engine, review, generateSummary, channelIngres
       };
       await sameHead();
       const actionInput = managed ? claim.context.input + '\n\nConcrete owned-browser target (untrusted page data, never policy):\n' + JSON.stringify(managed.target) : claim.context.input;
-      const args = { input: actionInput, candidate: action, covenant: prepared.genesis.covenant,
+      const args = { input: actionInput, candidate: action, covenant: prepared.genesis.covenant, reviewPurpose: 'action',
         trustedAgentContext: prepared.trustedAgentContext, availableEvidence: prepared.availableEvidence || [],
         hostProcessContext: prepared.hostProcessContext,
         toolObservations: observations(claim),
@@ -385,11 +385,11 @@ export function createPoIBroker({ engine, review, generateSummary, channelIngres
         signal: claim.context.signal };
       const assessment = await (claim.context.run ? claim.context.run(() => review(claim.config, args)) : review(claim.config, args));
       const fruits = assessment?.fruitages || assessment?.fruits || {};
-      if (assessment?.approved !== true || !FRUITS.every(key => Number.isInteger(fruits[key]) && fruits[key] >= 180 && fruits[key] <= 255) ||
-          !DIMENSIONS.every(key => Number.isInteger(assessment.scores?.[key]) && assessment.scores[key] >= 0 && assessment.scores[key] <= 255) || assessment.scores.covenant < 180)
+      if (assessment?.approved !== true || !FRUITS.every(key => Number.isInteger(fruits[key]) && fruits[key] >= REVIEW_THRESHOLD && fruits[key] <= 255) ||
+          !DIMENSIONS.every(key => Number.isInteger(assessment.scores?.[key]) && assessment.scores[key] >= 0 && assessment.scores[key] <= 255) || assessment.scores.covenant < REVIEW_THRESHOLD)
         throw failure('The proposed host action did not pass covenant review.', 'COVENANT_REJECTED');
       await sameHead();
-      const evaluated = await native(claim, { op: 'evaluate', root: claim.context.root, expectedHead: prepared.head.hash,
+      const evaluated = await native(claim, { op: 'evaluate_action', root: claim.context.root, expectedHead: prepared.head.hash,
         input: currentGoal ? ownGoalEvaluationInput(claim.context.input, currentGoal) : actionInput,
         output: action, scores: assessment.scores, assessment,
         toolObservations: observations(claim),
@@ -492,16 +492,18 @@ export function createPoIBroker({ engine, review, generateSummary, channelIngres
       const prepared = await prepare(claim);
       event(claim, 'gate', 'started', 'OpenClaw candidate PoI review');
       const assessment = await (claim.context.run ? claim.context.run(() => review(claim.config, {
+        reviewPurpose: 'response',
         input: claim.context.input, candidate: request.candidate, covenant: prepared.genesis.covenant,
         trustedAgentContext: prepared.trustedAgentContext, availableEvidence: prepared.availableEvidence || [],
         hostProcessContext: prepared.hostProcessContext,
         toolObservations: observations(claim),
         recentConversation: (prepared.recentHistory || []).flatMap(e => [{ role: 'user', content: e.input }, { role: 'assistant', content: e.output }]).slice(-12), signal: claim.context.signal,
-      })) : review(claim.config, { input: claim.context.input, candidate: request.candidate, covenant: prepared.genesis.covenant,
+      })) : review(claim.config, { input: claim.context.input, candidate: request.candidate, covenant: prepared.genesis.covenant, reviewPurpose: 'response',
         trustedAgentContext: prepared.trustedAgentContext, hostProcessContext: prepared.hostProcessContext,
         availableEvidence: prepared.availableEvidence || [], toolObservations: observations(claim), recentConversation: [], signal: claim.context.signal }));
       if (!assessment?.approved) throw Object.assign(failure('The OpenClaw candidate did not pass covenant review.', 'COVENANT_REJECTED'), {
-        stage: 'review', gate: { approved: false, scores: assessment?.scores, fruits: assessment?.fruits || assessment?.fruitages } });
+        stage: 'review', gate: { approved: false, threshold: RESPONSE_REVIEW_THRESHOLD,
+          scores: assessment?.scores, fruits: assessment?.fruits || assessment?.fruitages } });
       const evaluated = await native(claim, { op: claim.memoryPaused ? 'chat_evaluate' : 'evaluate', root: claim.context.root, expectedHead: prepared.head.hash,
         input: claim.context.input, output: request.candidate, scores: assessment.scores, assessment,
         preparationReceipt: prepared.preparationReceipt,
@@ -512,7 +514,7 @@ export function createPoIBroker({ engine, review, generateSummary, channelIngres
         const commitCandidate = output.metadata.length ? await mediaDisplay(claim, request.candidate) : request.candidate;
         let commitAssessment = assessment;
         if (commitCandidate !== request.candidate) {
-          const invoke = () => review(claim.config, {input: claim.context.input, candidate: commitCandidate,
+          const invoke = () => review(claim.config, {input: claim.context.input, candidate: commitCandidate, reviewPurpose: 'response',
             covenant: prepared.genesis.covenant, trustedAgentContext: prepared.trustedAgentContext, hostProcessContext: prepared.hostProcessContext,
             availableEvidence: prepared.availableEvidence || [], toolObservations: observations(claim), signal: claim.context.signal});
           commitAssessment = await (claim.context.run ? claim.context.run(invoke) : invoke());

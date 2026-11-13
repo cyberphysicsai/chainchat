@@ -36,7 +36,7 @@ async function fixture(t, options = {}) {
       if (request.op === "route") return { head: inspected().head, availableEvidence: evidence,
         route: { decision: "REPLAY", antecedent: { ring: 0, answer: ANSWER, truncated: false } } };
       if (request.op === "memory") return { head: inspected().head, availableEvidence: evidence };
-      if (request.op === "evaluate") return { accepted: true, verdict: "SEAL" };
+      if (["evaluate", "evaluate_action"].includes(request.op)) return { accepted: true, verdict: "SEAL" };
       if (request.op === "commit") {
         history.push(...request.exchanges.map(exchange => ({ ...exchange, ring: 1, hash: SOURCE_HASH })));
         return { accepted: true, ring: { index: 1, hash: SOURCE_HASH } };

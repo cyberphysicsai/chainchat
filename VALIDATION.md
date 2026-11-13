@@ -14,6 +14,8 @@ behavior rather than model quality.
 
 BYOK reliability regressions cover copied full endpoints across all four API protocols, protocol mismatches rejected before transport, required-review output allowances, and fixed private error handoffs. Native acceptance uses the real pinned OpenClaw Gateway and Python engine with a strict synthetic HTTP provider: an active greeting must pass semantic and native review and commit, while held or failed requests must not release an answer or change the ring ledger. These tests make no paid model calls and do not establish the cause of every field report.
 
+Response-policy boundary tests verify that fruitage and covenant scores of 150 and 179 can pass response review, while 149 is held without releasing or committing a reply. Tool and action reviews still require 180, and stricter native Timechain policies remain binding. Native OpenClaw acceptance exercises these response boundaries with the actual Python engine and a synthetic HTTP provider.
+
 The canonical packaged skill version and update policy are described in
 [Canonical Proof of Interaction runtime](CANONICAL_SKILL.md). For an independent
 historical chain fixture, the workflow also checks a fixed source revision of

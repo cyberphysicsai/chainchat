@@ -53,7 +53,7 @@ test('actual native SDK uses configured main model and native auth, with zero to
   broker = createPoIBroker({ engine, review: async (config, args) => {
     reviews++;
     return strictReview(await reviewWithCompletion(config, args, (_config, request) => manager.completeNative({ identity,
-      system: request.system, messages: request.messages, maxTokens: request.maxTokens, purpose: 'review', signal: request.signal })), args.availableEvidence || []);
+      system: request.system, messages: request.messages, maxTokens: request.maxTokens, purpose: 'review', signal: request.signal })), args.availableEvidence || [], args.reviewPurpose || 'action');
   } });
   await broker.start();
   manager = createOpenClawGateway({ stateDir: path.join(directory, 'gateway'), packageRoot, nodePath, broker,

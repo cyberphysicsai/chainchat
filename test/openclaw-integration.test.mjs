@@ -79,7 +79,7 @@ async function fixture(t) {
     engine: async request => { calls.push(structuredClone(request)); return engine(request); },
     review: async (_config, args) => {
       reviews.push(args); const result = goodReview();
-      if (state.rejectFruit) result.fruits.kindness = 179;
+      if (state.rejectFruit) result.fruits.kindness = 149;
       return result;
     },
     openclaw: { stateDir: path.join(directory, "gateway"), packageRoot: runtimePackage, nodePath: runtimeNode,

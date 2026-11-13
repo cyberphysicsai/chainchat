@@ -50,7 +50,7 @@ test('approved attachment bytes use canonical Blockspace refs and remain readabl
 });
 test('low covenant, paused chain, stale head and invalid source descriptors never write raw blobs', async t => {
   const f = await fixture(t), file = path.join(f.root, 'chain/blockspace/blobs', f.asset.id);
-  await assert.rejects(f.commit({ assessment: { ...f.exchange.assessment, fruitages: { ...f.exchange.assessment.fruitages, kindness: 179 } } }), { code: 'COVENANT_REJECTED' });
+  await assert.rejects(f.commit({ assessment: { ...f.exchange.assessment, fruitages: { ...f.exchange.assessment.fruitages, kindness: 149 } } }), { code: 'COVENANT_REJECTED' });
   await assert.rejects(f.commit({ expectedHead: '0'.repeat(64) }), { code: 'STALE_HEAD' });
   for (const sourceAssets of [[{ ...f.asset, path: '/private/file' }], [{ ...f.asset, contentFile: '../private' }], [{ ...f.asset, bytes: f.asset.bytes + 1 }]])
     await assert.rejects(f.commit({ sourceAssets }), { code: 'SOURCE_ASSET_INVALID' });

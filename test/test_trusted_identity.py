@@ -125,10 +125,11 @@ class TrustedIdentityTests(unittest.TestCase):
             pass
         action = {"input": "Review the user-selected source", "output": "Store the source as untrusted data."}
         for loadout in ([], ["modality:2"]):
-            for operation in ("ingest", "search", "pack", "portable-pack", "control", "feedback", "evaluate", "summary"):
+            for operation in ("ingest", "search", "pack", "portable-pack", "control", "feedback", "teach_response", "evaluate", "evaluate_action", "summary"):
                 with self.subTest(loadout=loadout, operation=operation), contextlib.ExitStack() as stack:
                     before = (self.root / "chain/rings.jsonl").read_bytes()
-                    def observe(root, tc, request, source_evidence=None, selected=None):
+                    def observe(root, tc, request, source_evidence=None, selected=None, response_generation=False):
+                        self.assertEqual(response_generation, operation in ("search", "evaluate", "teach_response"))
                         self.assertIsNotNone(selected, "Derived review must receive its independently resolved selection.")
                         context = bridge.trusted_agent_context(root, tc, selected)
                         self.assertEqual([item["key"] for item in context["equippedFaculties"]], loadout)
@@ -223,7 +224,7 @@ class TrustedIdentityTests(unittest.TestCase):
 
     def test_identity_does_not_override_low_fruitage_or_consistency(self):
         request = self.request("Hello! I'm Cypher Tempre, your AI assistant.")
-        request["assessment"]["fruitages"]["kindness"] = 179
+        request["assessment"]["fruitages"]["kindness"] = 149
         with self.assertRaises(bridge.BridgeError) as held:
             self.call("evaluate", **request)
         self.assertEqual(held.exception.code, "COVENANT_REJECTED")
