@@ -66,13 +66,14 @@ class ResponseThresholdTests(unittest.TestCase):
                 self.assertGreater(len(self.ledger()), len(before))
         self.assertTrue(self.call("verify")["verified"])
         self.assertEqual(self.call("inspect")["capabilities"]["fruitageFloor"], 150)
-        self.assertEqual(self.call("inspect")["capabilities"]["actionFruitageFloor"], 180)
+        self.assertEqual(self.call("inspect")["capabilities"]["actionFruitageFloor"], 150)
 
     def test_response_149_in_any_fruitage_or_covenant_and_explicit_rejection_are_held(self):
         for key in bridge.FRUITAGES:
             value = self.exchange()
             value["assessment"]["fruitages"][key] = 149
             self.refused("COVENANT_REJECTED", "evaluate", **value)
+            self.refused("COVENANT_REJECTED", "evaluate_action", **value)
             self.refused("COVENANT_REJECTED", "commit", expectedHead=self.head(), growth=False, **value)
         value = self.exchange()
         value["scores"]["covenant"] = 149
@@ -87,18 +88,22 @@ class ResponseThresholdTests(unittest.TestCase):
         self.refused("COVENANT_REJECTED", "commit", expectedHead=self.head(),
                      exchanges=[good, low], growth=False)
 
-    def test_tool_action_and_summary_floors_remain_180_and_json_cannot_select_response_policy(self):
+    def test_actions_and_summaries_accept_150_and_json_cannot_lower_the_minimum(self):
         source = "The user asked to think carefully about a question."
         summary = {"kind": "native-transcript", "text": source,
                    "sha256": hashlib.sha256(source.encode()).hexdigest()}
         for score in (150, 179):
-            self.refused("COVENANT_REJECTED", "evaluate_action", **self.exchange(score),
-                         response_generation=True, reviewPurpose="response", threshold=150)
-            self.refused("COVENANT_REJECTED", "evaluate_summary", expectedHead=self.head(),
-                         sourceData=summary, **self.exchange(score))
-        action = self.call("evaluate_action", **self.exchange(180))
-        self.assertTrue(action["accepted"])
-        self.assertEqual(action["assessment"]["floor"], 180)
+            with self.subTest(score=score):
+                action = self.call("evaluate_action", **self.exchange(score))
+                self.assertTrue(action["accepted"])
+                self.assertEqual(action["assessment"]["floor"], 150)
+                reviewed = self.call("evaluate_summary", expectedHead=self.head(), sourceData=summary, **self.exchange(score))
+                self.assertTrue(reviewed["accepted"])
+                self.assertEqual(reviewed["assessment"]["floor"], 150)
+        for operation in ("evaluate_action", "evaluate_summary"):
+            extra = {"sourceData": summary} if operation == "evaluate_summary" else {}
+            self.refused("COVENANT_REJECTED", operation, expectedHead=self.head(), **self.exchange(149),
+                         response_generation=True, reviewPurpose="response", threshold=0, **extra)
 
     def test_paused_response_150_is_read_only_and_149_remains_held(self):
         self.call("dormancy", action="pause", confirmed=True, expectedHead=self.head())
@@ -117,9 +122,11 @@ class ResponseThresholdTests(unittest.TestCase):
         policy.write_text(json.dumps({"values": {"covenant_floor": 190}}), encoding="utf-8")
         before = policy.read_bytes()
         self.refused("COVENANT_REJECTED", "evaluate", **self.exchange(179))
+        self.refused("COVENANT_REJECTED", "evaluate_action", **self.exchange(179))
         self.refused("COVENANT_REJECTED", "commit", expectedHead=self.head(), growth=False, **self.exchange(179))
         accepted = self.call("evaluate", **self.exchange(190))
         self.assertEqual(accepted["assessment"]["floor"], 190)
+        self.assertEqual(self.call("evaluate_action", **self.exchange(190))["assessment"]["floor"], 190)
         self.assertEqual(policy.read_bytes(), before)
 
     def test_search_candidates_use_response_policy_and_low_candidate_cannot_enter_selection(self):
@@ -143,7 +150,7 @@ class ResponseThresholdTests(unittest.TestCase):
         bad["rollouts"][0]["assessment"]["fruitages"]["kindness"] = 149
         self.refused("COVENANT_REJECTED", "search", **bad)
 
-    def test_derived_response_learning_accepts_150_while_generic_feedback_stays_180(self):
+    def test_response_and_generic_learning_accept_150_without_changing_history(self):
         request = self.exchange()
         self.call("commit", expectedHead=self.head(), growth=False, **request)
         before = self.ledger()
@@ -154,8 +161,12 @@ class ResponseThresholdTests(unittest.TestCase):
         self.assertTrue(result["extractorTaught"])
         self.assertEqual(self.ledger(), before)
         for operation in ("teach", "feedback"):
-            self.refused("COVENANT_REJECTED", operation, expectedHead=self.head(),
-                         labels=labels, learning=True, response_generation=True, reviewPurpose="response", **request)
+            with patch.dict(os.environ, {"CT_TELEMETRY": "on"}):
+                accepted = self.call(operation, expectedHead=self.head(), labels=labels, learning=True, **request)
+            self.assertTrue(accepted["extractorTaught"])
+            self.assertEqual(self.ledger(), before)
+            self.refused("COVENANT_REJECTED", operation, expectedHead=self.head(), labels=labels, learning=True,
+                         response_generation=True, reviewPurpose="response", threshold=0, **self.exchange(149))
 
 
 if __name__ == "__main__":

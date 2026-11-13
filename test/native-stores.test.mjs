@@ -70,7 +70,7 @@ test('native review uses a private completion callback with unchanged schema/fru
   const verdict={decision:'approve',scores:Object.fromEntries(DIMENSIONS.map(k=>[k,235])),fruits:Object.fromEntries(FRUITS.map(k=>[k,235])),usedRings:[],rationale:'A helpful grounded greeting.'};
   const completion=async (selected,args)=>{calls++; assert.deepEqual(selected,config); assert.ok(args.system.includes('independent pre-release covenant reviewer')); assert.equal(args.messages.length,1); return{text:JSON.stringify(verdict)};};
   assert.equal((await reviewWithCompletion(config,{input:'Hello',candidate:'Hello!',covenant:FRUITS},completion)).approved,true);
-  verdict.fruits.kindness=179;
+  verdict.fruits.kindness=149;
   assert.equal((await reviewWithCompletion(config,{input:'Hello',candidate:'Hello!',covenant:FRUITS},completion)).approved,false);
   assert.equal(calls,2);
 });

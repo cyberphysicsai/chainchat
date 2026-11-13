@@ -109,8 +109,9 @@ test('real native goals, settings, scoped tools and durable app restarts retain 
     assert.ok(requests.slice(beforeEffort).some(request => request.body.reasoning_effort === 'high' || request.body.reasoning?.effort === 'high'),
       'A reasoning-capable connected route must actually receive the selected effort.');
     const nativeSettings = await manager.describeControls(identity);
-    const updated = await manager.updateControls({ patch: { messages: { queue: { cap: 17 } } }, revision: nativeSettings.config.revision });
+    const updated = await manager.updateControls({ identity, patch: { messages: { queue: { cap: 17 } } }, revision: nativeSettings.config.revision, baseHash: nativeSettings.config.baseHash });
     assert.equal(updated.config.editable.messages.queue.cap, 17);
+    assert.equal(updated.config.effective.messages.queue.cap, 17);
     assert.equal((await manager.sessionControls(identity)).goal.id, goalId);
     const privateTransport = JSON.parse(await fs.readFile(path.join(managed, 'transport-identity.json'), 'utf8'));
     const publicState = JSON.stringify(await manager.describeControls(identity));
@@ -161,4 +162,74 @@ test('real native goals, settings, scoped tools and durable app restarts retain 
     } };
     await manager.close(); await walk(managed);
   } catch (error) { assert.fail(`${error.stack || error.message}\n${diagnostics.join('').slice(-4000)}`); }
+});
+
+test('native schema settings and disabled Telegram credentials apply, survive recreation and reset without provider or channel traffic', {
+  skip: !packageRoot || !nodePath ? 'Set CT_OPENCLAW_PACKAGE and CT_OPENCLAW_NODE for pinned native acceptance.' : false,
+  timeout: 480000,
+}, async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ct-native-channel-settings-test-'));
+  const root = path.join(directory, 'chain'), managed = path.join(directory, 'managed'), diagnostics = [], admissions = [];
+  await engine({op:'init',root,name:'NativeChannelConfigurationFixture'});
+  const inspected = await engine({op:'inspect',root,learning:false});
+  const identity = {agentId:'native-channel-test',genesisHash:inspected.genesis.hash};
+  let modelReviews = 0;
+  const broker = createPoIBroker({engine,review:async()=>{modelReviews++;throw new Error('This settings-only fixture must not call a model.');}});
+  await broker.start();
+  const makeManager = () => createOpenClawGateway({stateDir:managed,packageRoot,nodePath,
+    pluginPath:fileURLToPath(new URL('../openclaw/plugin',import.meta.url)),broker,startupTimeoutMs:180000,
+    onDiagnostic:line=>diagnostics.push(line)});
+  let manager = makeManager();
+  const token = '123456789:' + 'A'.repeat(35); // Synthetic fixture; never enable this channel.
+  t.after(async()=>{
+    await manager.close();await broker.close();
+    assert.ok(path.resolve(directory).startsWith(path.resolve(os.tmpdir())+path.sep));
+    assert.ok(path.basename(directory).startsWith('ct-native-channel-settings-test-'));
+    await fs.rm(directory,{recursive:true,force:true,maxRetries:12,retryDelay:150});
+  });
+  try {
+    const initial = await manager.describeControls(identity);
+    assert.ok(initial.config.baseHash);assert.equal(initial.nativeConfig.valid,true);
+    const settings = await manager.updateControls({identity,revision:initial.config.revision,baseHash:initial.config.baseHash,
+      patch:{messages:{queue:{cap:17}}}});
+    assert.equal(settings.config.effective.messages.queue.cap,17);
+    await assert.rejects(manager.updateControls({identity,revision:settings.config.revision,baseHash:initial.config.baseHash,
+      patch:{messages:{queue:{cap:18}}}}),{code:'OPENCLAW_CONFIG_STALE'});
+    const catalogue = await manager.nativeChannels({mode:'catalogue',identity});
+    const telegram = catalogue.items.find(item=>item.id==='telegram');
+    assert.ok(telegram?.installed,'The pinned native Telegram channel must be discovered dynamically.');
+    assert.ok(catalogue.items.some(item=>item.id==='discord'),'The native catalogue must include Discord without hard-coded menu rows.');
+    const field = telegram.credentialFields.find(row=>row.path.length===3&&row.path[2]==='botToken');
+    assert.ok(field,'The native Telegram schema must expose its write-only bot credential.');
+    const configured = await manager.nativeChannels({mode:'setup',identity,channelId:'telegram',accountId:telegram.defaultAccountId,
+      baseHash:catalogue.baseHash,values:{enabled:false},secretValues:[{name:'fixtureTelegram',target:field.target,value:token,remember:true}],
+      authorize:async action=>{admissions.push(action);assert.equal(JSON.stringify(action).includes(token),false);return{approved:true};}});
+    assert.equal(admissions.length,1);assert.equal(admissions[0].operation,'channels.configure');
+    assert.equal(configured.items.find(item=>item.id==='telegram').enabled,false);
+    let current = await manager.describeControls(identity);
+    assert.equal(current.nativeConfig.valid,true);assert.equal(current.config.effective.channels.telegram.enabled,false);
+    assert.equal(current.config.effective.messages.queue.cap,17);
+    assert.equal(JSON.stringify(current).includes(token),false);
+    assert.match(current.nativeConfig.config.channels.telegram.botToken,/REDACTED|managed private|private/iu);
+    const vault = await fs.readFile(path.join(managed,'native-secrets.json'),'utf8');
+    assert.equal(JSON.parse(vault).version,2);assert.equal(vault.includes(token),false);
+    const nativeFile = await fs.readFile(path.join(managed,'gateway.json'),'utf8');
+    assert.equal(nativeFile.includes(token),false);assert.match(nativeFile,/CHAINCHAT_NATIVE_[A-F0-9]{64}/u);
+    await manager.close();manager=makeManager();
+    current = await manager.describeControls(identity);
+    assert.equal(current.nativeConfig.valid,true);assert.equal(current.config.effective.messages.queue.cap,17);
+    assert.equal(current.config.effective.channels.telegram.enabled,false);assert.equal(JSON.stringify(current).includes(token),false);
+    const bindings = await manager.nativeSecrets({identity,action:'list'});
+    assert.ok(bindings.bindings.some(row=>row.name==='fixtureTelegram'&&row.available&&row.remember));
+    const restored = await manager.nativeChannels({mode:'catalogue',identity});
+    assert.equal(restored.items.find(item=>item.id==='telegram').enabled,false);
+    assert.ok(restored.items.find(item=>item.id==='telegram').accounts.every(account=>!account.running&&!account.connected));
+    const reset = await manager.updateControls({identity,revision:current.config.revision,baseHash:current.config.baseHash,
+      removePaths:['/messages/queue/cap']});
+    assert.equal(reset.config.editable.messages?.queue?.cap,undefined);
+    assert.notEqual(reset.config.effective.messages?.queue?.cap,17);
+    assert.equal(reset.config.effective.channels.telegram.enabled,false);
+    assert.equal(modelReviews,0,'Configuring disabled native integrations never requests inference.');
+    assert.equal(diagnostics.join('').includes(token),false,'Credentials must not reach runtime diagnostics.');
+  } catch(error) { assert.fail(`${error.stack||error.message}\n${diagnostics.join('').slice(-4000)}`); }
 });

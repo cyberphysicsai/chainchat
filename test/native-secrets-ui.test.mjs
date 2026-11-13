@@ -17,7 +17,33 @@ function fixture(api=async()=>response()){
   const controller=mountNativeSecretCard({document:doc,mount,api:async(...args)=>{calls.push(args);return api(...args);},context:()=>owner});
   return{doc,mount,calls,controller,get:id=>doc.ids.get(id),reset(){owner++;controller.reset();}};
 }
-const connected={sessionKey:'selected-owner-native-session'};
+const connected={sessionKey:'selected-owner-native-session',config:{baseHash:'native-settings-hash'}};
+
+test('older local credential endpoints receive their original payload and honest storage guidance',async()=>{
+  const f=fixture();f.controller.render({sessionKey:'older-native-session'});await settle();
+  assert.equal(f.get('nativeSecretRemember').disabled,true);
+  f.get('nativeSecretName').value='speech-test';f.get('nativeSecretTarget').value=target;f.get('nativeSecretValue').value=secret;
+  await f.get('nativeSecretForm').fire('submit');
+  assert.deepEqual(f.calls.at(-1),['/api/openclaw/secrets',{action:'set',name:'speech-test',target,value:secret}]);
+  assert.match(descendants(f.mount).map(node=>node.textContent).join(' '),/older runtime uses its earlier owner-private credential store/);
+});
+
+test('a local UTF-8 credential file preserves multiline bytes without rendering them or retaining an old owner read',async()=>{
+  const f=fixture(async(_route,payload)=>payload.action==='set'?response([binding]):response());
+  f.controller.render(connected);await settle();
+  const value='-----BEGIN SYNTHETIC KEY-----\nfixture-only\n-----END SYNTHETIC KEY-----\n',bytes=new TextEncoder().encode(value);
+  f.get('nativeSecretFile').files=[{size:bytes.length,arrayBuffer:async()=>bytes.buffer}];
+  await f.get('nativeSecretFile').fire('change');
+  assert.equal(f.get('nativeSecretValue').value,'');assert.equal(f.get('nativeSecretValue').required,false);
+  assert.equal(descendants(f.mount).some(node=>node.textContent.includes(value)),false);
+  f.get('nativeSecretName').value='speech-test';f.get('nativeSecretTarget').value=target;
+  await f.get('nativeSecretForm').fire('submit');
+  assert.equal(f.calls.at(-1)[1].value,value);assert.equal(f.get('nativeSecretFile').value,'');
+  assert.equal(f.get('nativeSecretValue').required,true);
+  let resolve;f.get('nativeSecretFile').files=[{size:bytes.length,arrayBuffer:()=>new Promise(done=>{resolve=done;})}];
+  const pending=f.get('nativeSecretFile').fire('change');f.reset();resolve(bytes.buffer);await pending;
+  assert.equal(f.get('nativeSecretFileStatus').textContent,'');assert.equal(f.get('nativeSecretValue').required,true);
+});
 
 test('dedicated credentials select only returned configured targets and response values never enter the public view',()=>{
   const view=nativeSecretView({...response([{...binding,value:secret}]),value:secret});
@@ -37,9 +63,9 @@ test('credential controls post the exact discovered binding and clear the passwo
   assert.ok(descendants(f.mount).some(node=>node.textContent.includes('<img src=x onerror=alert(1)>')));
   assert.equal(descendants(f.mount).some(node=>node.tagName==='img'),false);
   f.get('nativeSecretName').value='speech-test';f.get('nativeSecretTarget').value=target;f.get('nativeSecretValue').value=secret;
-  await f.get('nativeSecretForm').fire('submit');assert.deepEqual(f.calls.at(-1),['/api/openclaw/secrets',{action:'set',name:'speech-test',target,value:secret}]);
+  await f.get('nativeSecretForm').fire('submit');assert.deepEqual(f.calls.at(-1),['/api/openclaw/secrets',{action:'set',name:'speech-test',target,value:secret,remember:false}]);
   assert.equal(f.get('nativeSecretValue').value,'');assert.equal(descendants(f.mount).some(node=>node.textContent.includes(secret)),false);
-  assert.match(descendants(f.mount).map(node=>node.textContent).join(' '),/owner-protected plaintext/);
+  assert.match(descendants(f.mount).map(node=>node.textContent).join(' '),/encrypted, owner-private local vault/);
 });
 
 test('configured credentials remain removable when their target disappears and unavailable targets cannot be invented',async()=>{

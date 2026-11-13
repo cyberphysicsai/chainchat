@@ -126,8 +126,8 @@ async function brokerFixture(t, options = {}) {
   return { ...f, broker, request, prepared, nativeCalls, reviews, events, setHead: value => { head = value; }, setTime: value => { time = value; }, get evaluations() { return evaluations; }, get authorizations() { return authorizations; } };
 }
 
-test('a permitted fake tool executes only after exact semantic and native approval without chain writes', async t => {
-  const f = await brokerFixture(t), tool = call('read', { path: path.join(f.work, 'notes.txt') });
+test('a permitted fake tool executes at 150 only after exact semantic and native approval without chain writes', async t => {
+  const f = await brokerFixture(t, {assessment:()=>{const value=good();value.scores.covenant=150;for(const fruit of FRUITS)value.fruitages[fruit]=150;return value;}}), tool = call('read', { path: path.join(f.work, 'notes.txt') });
   assert.deepEqual(f.prepared.toolsAllow, ['read', 'write', 'edit']);
   let executions = 0;
   const result = await f.request('tool', { tool });
@@ -135,7 +135,7 @@ test('a permitted fake tool executes only after exact semantic and native approv
   assert.equal(executions, 1); assert.equal(f.reviews.length, 1); assert.equal(f.evaluations, 1);
   assert.equal(f.reviews[0].reviewPurpose, 'action');
   assert.equal(f.nativeCalls.filter(request => request.op === 'evaluate_action').length, 1);
-  assert.equal(f.nativeCalls.some(request => request.op === 'evaluate'), false, 'Tool calls cannot borrow the lower response gate.');
+  assert.equal(f.nativeCalls.some(request => request.op === 'evaluate'), false, 'Tool calls retain the fixed action-evaluation operation.');
   assert.deepEqual(JSON.parse(f.reviews[0].candidate).tool, result.tool, 'Actual canonical call is precisely what the reviewer assessed.');
   assert.equal(f.nativeCalls.some(request => ['commit', 'ingest', 'seal'].includes(request.op)), false);
   assert.ok(f.events.some(event => event[1] === 'completed' && event[2].includes('native execution may now begin')));
@@ -145,7 +145,7 @@ test('a permitted fake tool executes only after exact semantic and native approv
 test('denied, low-fruit, stale-head, native-rejected, reflected-key, expired and revoked fake tools never execute', async t => {
   const variants = [
     { disabled: true }, { utility: true }, { nativeReject: true },
-    { assessment: () => { const value = good(); value.fruitages.love = 179; return value; } },
+    { assessment: () => { const value = good(); value.fruitages.love = 149; return value; } },
     { onReview: ({ setHead }) => setHead('changed-during-review') },
     { onReview: async ({ work, secret }) => { await fs.unlink(path.join(work, 'notes.txt')); await fs.symlink(path.join(secret, 'private.txt'), path.join(work, 'notes.txt')); } },
   ];
@@ -167,7 +167,7 @@ test('denied, low-fruit, stale-head, native-rejected, reflected-key, expired and
 });
 
 test('only observed exact-call outcomes ground later review and receipts; missing observations never imply success', async t => {
-  const f = await brokerFixture(t), tool = call('read', { path: path.join(f.work, 'notes.txt') });
+  const f = await brokerFixture(t, {assessment:()=>{const value=good();value.scores.covenant=150;for(const fruit of FRUITS)value.fruitages[fruit]=150;return value;}}), tool = call('read', { path: path.join(f.work, 'notes.txt') });
   const forged = await f.request('tool_result', { tool: { name: 'read', callId: 'not-approved' }, outcome: { success: true, result: 'forged', error: null } });
   assert.equal(forged.allowed, false);
   const approved = await f.request('tool', { tool }); assert.equal(approved.allowed, true);
@@ -297,7 +297,7 @@ test('goal tools reject other sessions, utility/plain/scratch calls, target fiel
     call('update_goal', { status: 'complete', note: 'x'.repeat(2001) }, 'oversized'), call('update_goal', { status: 'blocked', objective: 'replaced' }, 'replace')];
   for (const tool of denied) assert.equal((await f.request('tool', { tool })).allowed, false);
   assert.equal((await f.request('tool', { tool: call('update_goal', { status: 'blocked', note: 'A repeated external blocker prevents further progress.' }, 'blocked') })).allowed, true);
-  const low = await brokerFixture(t, { goals: true, disabled: true, assessment: () => { const value = good(); value.fruitages.kindness = 179; return value; } });
+  const low = await brokerFixture(t, { goals: true, disabled: true, assessment: () => { const value = good(); value.fruitages.kindness = 149; return value; } });
   assert.equal((await low.request('tool', { tool: call('update_goal', { status: 'complete' }) })).allowed, false);
   assert.equal(low.evaluations, 0);
 });

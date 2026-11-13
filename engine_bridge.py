@@ -50,8 +50,8 @@ from datetime import datetime, timezone
 FRUITAGES = ("love", "peace", "joy", "kindness", "mildness", "self-control",
              "goodness", "patience", "faith")
 DIMENSIONS = tuple(d for d in POI_DIMENSIONS if d != "brightness")
-FRUITAGE_FLOOR = 180
-RESPONSE_FRUITAGE_FLOOR = 150
+FRUITAGE_FLOOR = 150
+RESPONSE_FRUITAGE_FLOOR = FRUITAGE_FLOOR
 MAX_TEXT_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 8192
 MAX_TRUSTED_CONTEXT_BYTES = 128 * 1024
@@ -490,8 +490,8 @@ def validate_assessment(raw_scores, assessment, root, response_generation=False)
         value = fruitages[key]
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
             raise BridgeError("REVIEW_INVALID", f"The {key} assessment must be an integer from 0 through 255.")
-    # Only fixed response operations select this lower floor. Request JSON
-    # cannot override the action floor or an explicitly stricter chain policy.
+    # Fixed operations preserve the review intent. Request JSON cannot override
+    # either minimum or an explicitly stricter native chain policy.
     floor = max(RESPONSE_FRUITAGE_FLOOR if response_generation else FRUITAGE_FLOOR,
                 poi.policy_thresholds(root)["covenant_floor"])
     lowest = min(fruitages[k] for k in FRUITAGES)

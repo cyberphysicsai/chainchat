@@ -328,8 +328,8 @@ test('native candidate response review accepts the inclusive 150 floor while ret
   });
 });
 
-test('the lower response floor never admits a host tool at 179 and action review uses its native backstop', async t => {
-  let score = 179;
+test('host tools accept 150 inclusively, hold 149 and retain their action authority backstop', async t => {
+  let score = 149;
   const operations = [];
   const f = await fixture(t, { assessment: () => {
     const value = good(); value.scores.covenant = score;
@@ -344,10 +344,10 @@ test('the lower response floor never admits a host tool at 179 and action review
   assert.equal((await request('action-low')).body.allowed, false);
   assert.equal(f.seen[0].reviewPurpose, 'action');
   assert.equal(operations.includes('evaluate_action'), false, 'A low semantic action score must stop before native admission.');
-  score = 180;
+  score = 150;
   assert.equal((await request('action-boundary')).body.allowed, true);
   assert.equal(f.seen[1].reviewPurpose, 'action');
-  assert.equal(operations.includes('evaluate_action'), true, 'Action review retains its distinct native 180 floor.');
+  assert.equal(operations.includes('evaluate_action'), true, 'Action review uses its distinct native operation at the 150 minimum.');
   assert.equal(operations.includes('evaluate'), false, 'Tools cannot borrow the response-evaluation operation.');
   assert.equal((await engine({ op: 'inspect', root: f.root })).head.index, 0);
 });

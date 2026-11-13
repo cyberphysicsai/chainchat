@@ -8,16 +8,16 @@ import path from 'node:path';
 const identity = { agentId: 'paired-agent', genesisHash: 'a'.repeat(64) };
 function fixture(entry = null) {
   const calls = [], key = controlSessionKey(identity);
-  let overlay = { patch: {}, revision: 'r1' };
+  let overlay = { patch: {}, revision: 'r1' }, effective = { gateway: { auth: { token: 'private' } }, maxTokens: 123 };
   const controls = createNativeControls({
     getRuntime: () => ({ hostTools: 'disabled' }), readOverlay: async () => overlay,
-    applyOverlay: async patch => calls.push(['apply', patch]),
+    applyOverlay: async patch => { calls.push(['apply', patch]); effective = { ...effective, ...structuredClone(patch) }; },
     saveOverlay: async patch => (overlay = { patch, revision: 'r2' }),
     rpc: async (method, params) => {
       calls.push([method, params]);
       if (method === 'sessions.describe') return { session: entry ? { key, ...entry } : null };
       if (method === 'config.schema') return { schema: { properties: { maxTokens: { type: 'number' } } } };
-      if (method === 'config.get') return { config: { gateway: { auth: { token: 'private' } }, maxTokens: 123 } };
+      if (method === 'config.get') return { config: effective };
       if (method === 'commands.list') return { commands: [{ name: 'think' }] };
       return { ok: true };
     },
@@ -114,7 +114,7 @@ test('settings concurrency and guard failures never apply native configuration',
   await assert.rejects(f.controls.updateControls({ revision: 'r1', patch: { gateway: {} } }), error => error.code === 'OPENCLAW_SETTING_GUARDED');
   assert.equal(f.calls.length, 0);
   const result = await f.controls.updateControls({ revision: 'r1', patch: { messages: { queue: { cap: 25 } } } });
-  assert.equal(result.config.revision, 'r2'); assert.equal(f.calls[0][0], 'apply');
+  assert.equal(result.config.revision, 'r2'); assert.equal(f.calls.filter(([method]) => method === 'apply').length, 1);
 });
 
 test('owner native setting paths remove adapter-only blocks without widening sibling paths', () => {
@@ -176,8 +176,9 @@ test('native settings cannot bypass the reviewed skill library, including a prev
   const revision = 'b'.repeat(64);
   const stored = JSON.stringify({ version: 1, revision, patch: { skills, agents: { defaults, list, entries } } });
   await fs.writeFile(file, stored);
-  assert.deepEqual(await readControlOverlay(directory), { revision,
-    patch: { agents: { defaults: { thinkingDefault: 'high' }, list: [{ id: 'main' }], entries: { other: {} } } } });
+  // An older overlay must not silently restore an agent roster lacking managed
+  // Timechain admission; the local owner can reset that obsolete override.
+  await assert.rejects(readControlOverlay(directory), { code: 'OPENCLAW_SETTING_GUARDED' });
   assert.equal(await fs.readFile(file, 'utf8'), stored);
 });
 
