@@ -76,7 +76,7 @@ async function fixture(t, overrides = {}) {
         computed: {},
         ...(overrides.prepare ? overrides.prepare(request, chain) : {}),
       };
-    if (request.op === "evaluate")
+    if (["evaluate", "evaluate_action"].includes(request.op))
       return overrides.evaluate
         ? overrides.evaluate(request)
         : { ok: true, accepted: true, verdict: "SEAL" };
@@ -871,7 +871,7 @@ test("reflected credentials from generation or review never reach pending files,
     assert.equal(f.reviewCalls.length, stage === "generation" ? 0 : 1);
     assert.equal(
       f.calls.some((call) =>
-        ["evaluate", "commit", "ingest", "pack_import"].includes(call.op),
+        ["evaluate", "evaluate_action", "commit", "ingest", "pack_import"].includes(call.op),
       ),
       false,
     );
@@ -1169,4 +1169,55 @@ test("ending a bridge session cancels model work and prevents commitment", async
   assert.equal((await request).status, 499);
   assert.equal(f.calls.filter((c) => c.op === "commit").length, 0);
   assert.equal(f.sessions.size, 0);
+});
+
+
+test('response review uses 150 while an assessment cannot lower the action policy', () => {
+  const result = goodReview();
+  result.scores.covenant = 179;
+  for (const fruit of FRUITS) result.fruits[fruit] = 179;
+  result.threshold = 150; result.reviewPurpose = 'response';
+  assert.equal(strictReview(result).approved, false);
+  assert.equal(strictReview(result).threshold, 180);
+  assert.equal(strictReview(result, [], 'response').approved, true);
+  assert.equal(strictReview(result, [], 'response').threshold, 150);
+});
+
+test('chat response boundaries reach the model reviewer, native gate and conversation commit', async t => {
+  for (const score of [150, 179]) await t.test(String(score), async t => {
+    const f = await fixture(t, { review: (_config, args) => {
+      assert.equal(args.reviewPurpose, 'response');
+      const result = goodReview(); result.scores.covenant = score;
+      for (const fruit of FRUITS) result.fruits[fruit] = score;
+      return result;
+    } });
+    await f.ready();
+    const reply = await f.request('/api/chat', { message: 'Please introduce yourself', threshold: 0 });
+    assert.equal(reply.status, 200, JSON.stringify(reply.body));
+    assert.equal(reply.body.message.gate.threshold, 150);
+    assert.equal(reply.body.state.gate.threshold, 150);
+    assert.equal(reply.body.state.gate.actionThreshold, 180);
+    const evaluations = f.calls.filter(call => call.op === 'evaluate');
+    const commits = f.calls.filter(call => call.op === 'commit');
+    assert.ok(evaluations.length > 0); assert.equal(commits.length, 1);
+    assert.ok([...evaluations, ...commits].every(call => call.scores.covenant === score));
+  });
+});
+
+test('149 remains held at the response boundary despite browser score overrides', async t => {
+  for (const dimension of ['covenant', ...FRUITS]) await t.test(dimension, async t => {
+    const f = await fixture(t, { generate: () => ({ text: 'PRIVATE_BOUNDARY_HELD' }), review: () => {
+      const result = goodReview();
+      if (dimension === 'covenant') result.scores.covenant = 149; else result.fruits[dimension] = 149;
+      return result;
+    } });
+    await f.ready();
+    const reply = await f.request('/api/chat', { message: 'A normal request', reviewPurpose: 'response', threshold: 0, disableGate: true });
+    assert.equal(reply.status, 422);
+    assert.equal(reply.body.code, 'COVENANT_REJECTED');
+    assert.equal(reply.body.gate.threshold, 150);
+    assert.doesNotMatch(JSON.stringify(reply.body), /PRIVATE_BOUNDARY_HELD/);
+    assert.equal(f.calls.some(call => call.op === 'commit'), false);
+    assert.doesNotMatch(await allText(f.dataDir), /PRIVATE_BOUNDARY_HELD/);
+  });
 });

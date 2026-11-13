@@ -127,7 +127,7 @@ test("fresh-chain introductions use verified identity in generation, review and 
 
 test("verified identity cannot rescue a covenant-violating introduction", { timeout: 180000 }, async t => {
   const f = await fixture(t, { generate: async () => ({ text: "I'm Cognition Fixture, your conversational assistant." }),
-    review: async () => { const result = goodReview(); result.fruits.kindness = 179; return result; } });
+    review: async () => { const result = goodReview(); result.fruits.kindness = 149; return result; } });
   ok(await f.call("/api/cognition", { revisionLimit: 0 }));
   const response = await f.call("/api/chat", { message: "Please introduce yourself" });
   assert.equal(response.status, 422);
@@ -173,7 +173,7 @@ test("real engine: active review/seal, paused-memory reviewed calls and resume",
   assert.deepEqual(await fingerprint(f.root), before, "Paused-memory reviewed chat must not mutate native chain, faculties or telemetry.");
   assert.equal(f.calls.slice(callIndex).filter(c => c.op === 'chat_prepare').length, 2);
   assert.equal(f.calls.slice(callIndex).filter(c => c.op === 'chat_evaluate').length, 2);
-  assert.equal(f.calls.slice(callIndex).some(c => ["prepare", "route", "memory", "evaluate", "commit", "teach", "search", "maintenance"].includes(c.op)), false);
+  assert.equal(f.calls.slice(callIndex).some(c => ["prepare", "route", "memory", "evaluate", "evaluate_action", "commit", "teach", "teach_response", "search", "maintenance"].includes(c.op)), false);
   assert.equal(JSON.stringify(f.generated.at(-1).args).includes("PRIVATE_RAW_ONE"), false, "Ordinary calls are stateless and cannot silently retain prior raw turns.");
   assert.equal((await f.call("/api/state")).body.gate.required, true);
   ok(await f.call("/api/cognition", { mode: "active", confirm: true }));
@@ -189,7 +189,7 @@ test("real engine: learning-off retains accepted conversation but suppresses gro
   ok(await f.call("/api/chat", { message: "Consider a novel magnetohydrodynamic synchronization question carefully." }));
   const calls = f.calls.slice(offset), commit = calls.find(c => c.op === "commit");
   assert.ok(commit); assert.equal(commit.learning, false); assert.equal(commit.growth, false);
-  assert.equal(calls.some(c => ["teach", "maintenance"].includes(c.op)), false);
+  assert.equal(calls.some(c => ["teach", "teach_response", "maintenance"].includes(c.op)), false);
   assert.equal((await chatRings(f.root)).length, 1);
   const after = await fingerprint(f.root);
   for (const name of new Set([...Object.keys(before), ...Object.keys(after)])) {
@@ -230,7 +230,7 @@ test("real engine: an externally paused chain keeps read-only PoI despite stored
   assert.equal(raw.body.message.gate.approved, true);
   assert.equal(f.calls.slice(offset).filter(c => c.op === 'chat_prepare').length, 1);
   assert.equal(f.calls.slice(offset).filter(c => c.op === 'chat_evaluate').length, 1);
-  assert.equal(f.calls.slice(offset).some(c => ["prepare", "commit", "evaluate", "teach"].includes(c.op)), false);
+  assert.equal(f.calls.slice(offset).some(c => ["prepare", "commit", "evaluate", "evaluate_action", "teach", "teach_response"].includes(c.op)), false);
   assert.deepEqual(await fingerprint(f.root), before);
 });
 
@@ -315,7 +315,7 @@ test("real engine: semantic memory toggles invoke shaped evidence and propagate 
   assert.match(generation.args.system, /canonicalEvidence/);
   assert.match(generation.args.system, /blue notebook/);
   assert.match(generation.args.system, /bounded evidence selection/);
-  for (const call of calls.filter(c => c.op === "teach"))
+  for (const call of calls.filter(c => c.op === "teach_response"))
     assert.equal(JSON.stringify(call.labels).includes("Invented faculty"), false);
   invalidPlan = true; offset = f.calls.length;
   ok(await f.call("/api/chat", { message: "Please consider the notebook preference carefully." }));
@@ -391,7 +391,7 @@ test("real engine: bounded revision rechecks a held candidate and never seals an
   assert.equal(held.body.message, undefined);
   assert.equal(rejecting.generated.length, 3); assert.equal(rejecting.reviewed.length, 3);
   assert.equal((await chatRings(rejecting.root)).length, 0);
-  assert.equal(rejecting.calls.some(c => c.op === "commit" || c.op === "teach"), false);
+  assert.equal(rejecting.calls.some(c => ["commit", "teach", "teach_response"].includes(c.op)), false);
   assert.equal((await rejecting.call("/api/state")).body.pending.count, 0);
 });
 
@@ -413,7 +413,7 @@ test("real engine: post-commit teaching learns only selected equipped labels and
   assert.equal(response.body.message.learning.taught, 1);
   assert.equal(response.body.message.learning.held, 0);
   const commitIndex = f.calls.findIndex(c => c.op === "commit");
-  const teachIndex = f.calls.findIndex(c => c.op === "teach");
+  const teachIndex = f.calls.findIndex(c => c.op === "teach_response");
   assert.ok(teachIndex > commitIndex);
   assert.equal(f.calls[teachIndex].labels.senses.length, 1);
   assert.equal(f.calls[teachIndex].labels.modalities.length, 1);
@@ -421,7 +421,7 @@ test("real engine: post-commit teaching learns only selected equipped labels and
   ok(await f.call("/api/cognition", { learning: false }));
   const frozen = await f.call("/api/chat", { message: "Consider another patient response without learning." }); ok(frozen);
   assert.equal(frozen.body.message.learning.enabled, false);
-  assert.equal(f.calls.slice(offset).some(c => c.op === "teach"), false);
+  assert.equal(f.calls.slice(offset).some(c => ["teach", "teach_response"].includes(c.op)), false);
   const after = await fingerprint(f.root);
   for (const name of new Set([...Object.keys(before), ...Object.keys(after)]))
     if (/extractor|teach|telemetry|calibrat|lens/.test(name)) assert.equal(after[name], before[name], name);
@@ -488,7 +488,7 @@ test("real engine: replay uses a reviewed antecedent and records acceptance afte
   assert.equal(replayed.body.message.content, ANSWER);
   assert.equal(f.generated.length, 2, "Only the first answer and second-turn retrieval plan use generation calls.");
   assert.equal(f.reviewed.length, 2, "Replay must receive a fresh semantic review.");
-  const calls = f.calls.slice(offset), teaching = calls.find(c => c.op === "teach");
+  const calls = f.calls.slice(offset), teaching = calls.find(c => c.op === "teach_response");
   assert.ok(teaching); assert.deepEqual(teaching.replay, { action: "accept", ring: firstRing });
   assert.ok(calls.findIndex(c => c.op === "commit") < calls.indexOf(teaching));
   assert.equal(replayed.body.message.learning.held, 0);

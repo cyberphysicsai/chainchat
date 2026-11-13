@@ -150,7 +150,7 @@ class EngineBridgeTests(unittest.TestCase):
                     self.commit(assessment=bad)
         for fruit in bridge.FRUITAGES:
             assessment = self.exchange()["assessment"]
-            assessment["fruitages"][fruit] = 179
+            assessment["fruitages"][fruit] = 149
             self.assert_code("COVENANT_REJECTED", lambda: self.commit(assessment=assessment))
         scores = self.exchange()["scores"]
         scores["covenant"] = 1

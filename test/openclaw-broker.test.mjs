@@ -303,11 +303,52 @@ test('actual private goal-only admission exposes goal API names separately from 
   assert.equal((await f.call('tool', { tool: { name: 'exec', params: { command: 'echo ungranted' }, callId: 'not-a-goal' } })).body.allowed, false);
 });
 test('low semantic/native scores and changed run identities cannot release output', async t => {
-  const f = await fixture(t, { assessment: () => { const result = good(); result.fruitages.love = 179; return result; } });
+  const f = await fixture(t, { assessment: () => { const result = good(); result.fruitages.love = 149; return result; } });
   const claim = await f.register(); await f.call('admit');
   assert.equal((await f.call('prepare', { runId: 'another-run' })).body.allowed, false);
   assert.equal((await f.call('finalize', { candidate })).body.allowed, false);
   await assert.rejects(f.broker.assertCandidate({ claimId: claim.claimId, candidate }));
+  assert.equal((await engine({ op: 'inspect', root: f.root })).head.index, 0);
+});
+
+test('native candidate response review accepts the inclusive 150 floor while retaining exact receipt checks', async t => {
+  for (const score of [150, 179]) await t.test(String(score), async t => {
+    const f = await fixture(t, { assessment: () => {
+      const value = good(); value.scores.covenant = score;
+      for (const fruit of FRUITS) value.fruitages[fruit] = score;
+      return value;
+    } });
+    const claim = await f.register(); await f.call('admit'); await f.call('prepare');
+    const result = await f.call('finalize', { candidate });
+    assert.equal(result.body.allowed, true, 'A compatible response must reach native review at its response floor.');
+    assert.equal(f.seen[0].reviewPurpose, 'response');
+    assert.equal((await f.broker.assertCandidate({ claimId: claim.claimId, candidate })).reviewed, true);
+    await assert.rejects(f.broker.assertCandidate({ claimId: claim.claimId, candidate: candidate + ' altered' }));
+    assert.equal((await engine({ op: 'inspect', root: f.root })).head.index, 0, 'The UI still owns conversation commitment.');
+  });
+});
+
+test('the lower response floor never admits a host tool at 179 and action review uses its native backstop', async t => {
+  let score = 179;
+  const operations = [];
+  const f = await fixture(t, { assessment: () => {
+    const value = good(); value.scores.covenant = score;
+    for (const fruit of FRUITS) value.fruitages[fruit] = score;
+    return value;
+  }, engine: async request => { operations.push(request.op); return engine(request); } });
+  await f.register({ input: 'List this agent\'s managed schedules.',
+    toolAuthority: { enabled: true, acknowledged: true, tools: ['chainchat_automation'], roots: [], networkHosts: [], allowExecution: false },
+    executeManagedService: async () => { throw new Error('Review alone must never execute a service.'); } });
+  await f.call('admit'); await f.call('prepare');
+  const request = callId => f.call('tool', { tool: { name: 'chainchat_automation', callId, params: { action: 'list' } } });
+  assert.equal((await request('action-low')).body.allowed, false);
+  assert.equal(f.seen[0].reviewPurpose, 'action');
+  assert.equal(operations.includes('evaluate_action'), false, 'A low semantic action score must stop before native admission.');
+  score = 180;
+  assert.equal((await request('action-boundary')).body.allowed, true);
+  assert.equal(f.seen[1].reviewPurpose, 'action');
+  assert.equal(operations.includes('evaluate_action'), true, 'Action review retains its distinct native 180 floor.');
+  assert.equal(operations.includes('evaluate'), false, 'Tools cannot borrow the response-evaluation operation.');
   assert.equal((await engine({ op: 'inspect', root: f.root })).head.index, 0);
 });
 test('utility invocations cannot acquire tool rights or pretend to be an active plain call', async t => {

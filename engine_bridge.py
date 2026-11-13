@@ -51,6 +51,7 @@ FRUITAGES = ("love", "peace", "joy", "kindness", "mildness", "self-control",
              "goodness", "patience", "faith")
 DIMENSIONS = tuple(d for d in POI_DIMENSIONS if d != "brightness")
 FRUITAGE_FLOOR = 180
+RESPONSE_FRUITAGE_FLOOR = 150
 MAX_TEXT_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 8192
 MAX_TRUSTED_CONTEXT_BYTES = 128 * 1024
@@ -471,7 +472,7 @@ def check_expected(tc, request):
         raise BridgeError("STALE_HEAD", "The chain changed since this request began. Refresh and try again.")
 
 
-def validate_assessment(raw_scores, assessment, root):
+def validate_assessment(raw_scores, assessment, root, response_generation=False):
     if not isinstance(raw_scores, dict) or set(DIMENSIONS) - raw_scores.keys():
         raise BridgeError("REVIEW_INVALID", "A complete six-dimension model assessment is required.")
     scores = {}
@@ -489,7 +490,10 @@ def validate_assessment(raw_scores, assessment, root):
         value = fruitages[key]
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
             raise BridgeError("REVIEW_INVALID", f"The {key} assessment must be an integer from 0 through 255.")
-    floor = max(FRUITAGE_FLOOR, poi.policy_thresholds(root)["covenant_floor"])
+    # Only fixed response operations select this lower floor. Request JSON
+    # cannot override the action floor or an explicitly stricter chain policy.
+    floor = max(RESPONSE_FRUITAGE_FLOOR if response_generation else FRUITAGE_FLOOR,
+                poi.policy_thresholds(root)["covenant_floor"])
     lowest = min(fruitages[k] for k in FRUITAGES)
     # A high aggregate score cannot hide one low fruitage or a low covenant score.
     scores["covenant"] = min(scores["covenant"], lowest)
@@ -527,13 +531,14 @@ def tool_observations(value):
     return clean
 
 
-def assess_exchange(root, tc, request, source_evidence=None, selected=None):
+def assess_exchange(root, tc, request, source_evidence=None, selected=None, response_generation=False):
     incoming = text_value(request.get("input"), "input")
     outgoing = text_value(request.get("output"), "output")
     screening = immune.Immune(root).screen(incoming)
     if screening.get("blocked"):
         raise BridgeError("INPUT_BLOCKED", "The engine immune screen rejected this input.")
-    scores, assessment = validate_assessment(request.get("scores"), request.get("assessment"), root)
+    scores, assessment = validate_assessment(request.get("scores"), request.get("assessment"), root,
+                                             response_generation=response_generation)
     gate = poi.PoIGate(poi.policy_thresholds(root))
     grounding_context = request.get("groundingContext", "")
     if not isinstance(grounding_context, str) or len(grounding_context.encode("utf-8")) > MAX_TEXT_BYTES:
@@ -606,7 +611,9 @@ def op_inspect(request):
             "capabilities": {"recall": True, "equipment": True, "chronosynaptic": True,
                              "continuum": True, "growth": True, "facultyPacks": True, "maxPerspectives": 21,
                              "arbitraryTools": False, "semanticGate": "model-assessed; fail-closed on low or missing scores",
-                             "engine": "Proof of Interaction v1.0.0", "fruitageFloor": FRUITAGE_FLOOR}}
+                             "engine": "Proof of Interaction v1.0.0",
+                             "fruitageFloor": max(RESPONSE_FRUITAGE_FLOOR, poi.policy_thresholds(root)["covenant_floor"]),
+                             "actionFruitageFloor": max(FRUITAGE_FLOOR, poi.policy_thresholds(root)["covenant_floor"])}}
 
 
 def release_hashes(tc):
@@ -751,13 +758,13 @@ def op_prepare(request, reviewed_chat=False):
             "runtime": runtime_state(root, request), "extractor": extractor_label(root, incoming, request)}
 
 
-def op_evaluate(request, reviewed_chat=False):
+def op_evaluate(request, reviewed_chat=False, response_generation=True):
     root = project_root(request)
     tc, _, _ = verified_chain(root, require_writable=not reviewed_chat, reviewed_chat=reviewed_chat)
     if request.get("expectedHead") is not None:
         check_expected(tc, request)
     selected = selected_faculties(root, request.get("loadout"))
-    exchange = assess_exchange(root, tc, request, selected=selected)
+    exchange = assess_exchange(root, tc, request, selected=selected, response_generation=response_generation)
     return {"accepted": True, "sealed": False, "head": compact_head(tc), "verdict": exchange["gate"],
             "scores": exchange["scores"], "assessment": exchange["assessment"],
             "usedRings": exchange["usedRings"], "evidence": exchange["evidence"]}
@@ -770,6 +777,11 @@ def op_chat_prepare(request):
 
 def op_chat_evaluate(request):
     return op_evaluate({**request, "learning": False}, reviewed_chat=True)
+
+
+def op_evaluate_action(request):
+    """Tool/action review retains its floor independently of response policy."""
+    return op_evaluate(request, response_generation=False)
 
 
 def op_evaluate_summary(request):
@@ -883,7 +895,7 @@ def op_commit(request):
         if not isinstance(raw, dict):
             raise BridgeError("INVALID_REQUEST", "Each exchange must be an object.")
         equipped = selected_faculties(root, raw.get("loadout", request.get("loadout")))
-        item = assess_exchange(root, tc, raw, selected=equipped)
+        item = assess_exchange(root, tc, raw, selected=equipped, response_generation=True)
         item["_sourceAssets"] = source_assets.descriptors(raw.get("sourceAssets"))
         item["_outputAssets"] = source_assets.descriptors(raw.get("outputAssets"))
         item["loadout"] = [f["key"] for f in equipped]
@@ -1917,12 +1929,12 @@ def op_faculty_action(request):
             "ring": {"index": ring["index"], "hash": ring["ring_hash"]}}
 
 
-def op_feedback(request):
+def op_feedback(request, response_generation=False):
     root = project_root(request)
     tc, _, _ = verified_chain(root, require_writable=True)
     require_learning(request)
     selected = selected_faculties(root, request.get("loadout"))
-    reviewed = assess_exchange(root, tc, request, selected=selected)
+    reviewed = assess_exchange(root, tc, request, selected=selected, response_generation=response_generation)
     labels = request.get("labels", {})
     if not isinstance(labels, dict) or set(labels) - {"senses", "modalities"}:
         raise BridgeError("INVALID_LOADOUT", "labels must contain equipped modality and sense names.")
@@ -1956,6 +1968,11 @@ def op_feedback(request):
                 result = getattr(manager, replay_outcome["action"])(replay_outcome["ring"], reviewed["input"])
     return {"head": compact_head(tc), "extractorTaught": taught, "replay": result,
             "attestation": "Derived feedback; native telemetry digest records its integrity during consolidation."}
+
+
+def op_teach_response(request):
+    """Derive learning from a reviewed response without lowering action review."""
+    return op_feedback(request, response_generation=True)
 
 
 def maintenance_status(root):
@@ -2163,7 +2180,7 @@ def op_search(request):
         summary = text_value(candidate.get("summary"), "perspective summary", 32000)
         reviewed = assess_exchange(root, tc, {"input": query, "output": summary,
                     "scores": candidate.get("scores"), "assessment": candidate.get("assessment"),
-                    "usedRings": candidate.get("usedRings", [])}, selected=selected)
+                    "usedRings": candidate.get("usedRings", [])}, selected=selected, response_generation=True)
         records[path] = reviewed
         for name in path:
             faculties.setdefault(name, {"id": len(faculties) + 1, "kind": "modality", "name": name,
@@ -2227,14 +2244,15 @@ def op_advanced_maintenance(request):
 OPERATIONS = {"init": op_init, "inspect": op_inspect, "prepare": op_prepare,
               "chat_prepare": op_chat_prepare, "chat_evaluate": op_chat_evaluate,
               "read_source_asset": op_read_source_asset,
-              "evaluate": op_evaluate, "evaluate_summary": op_evaluate_summary, "commit": op_commit, "ingest": op_ingest, "verify": op_verify,
+              "evaluate": op_evaluate, "evaluate_action": op_evaluate_action, "evaluate_summary": op_evaluate_summary,
+              "commit": op_commit, "ingest": op_ingest, "verify": op_verify,
               "sanitize_source": op_sanitize_source,
               "pack_preview": op_pack_preview, "pack_import": op_pack_import, "pack_export": op_pack_export,
               "runtime_status": op_runtime_status, "dormancy": op_dormancy,
               "route": op_route, "memory": op_memory, "search": op_search,
               "faculty_action": op_faculty_action, "maintenance": op_maintenance,
               "advanced_maintenance": op_advanced_maintenance,
-              "feedback": op_feedback, "teach": op_feedback}
+              "feedback": op_feedback, "teach": op_feedback, "teach_response": op_teach_response}
 
 
 def dispatch(request):

@@ -41,7 +41,7 @@ test('original native browser executes only freshly reviewed primitives and cont
         catch (error) { console.error('[native-browser] fixture recheck:', error.code, error.message); throw error; } } }; },
     authorizeAction: async () => { helpers++; return { allowed: true }; } });
   const broker = createPoIBroker({ engine: async request => { const result = await engine(request);
-    if (request.op === 'evaluate' && request.output?.includes('proposed-host-tool-action')) console.error('[native-browser] fixture native gate:', JSON.stringify({ accepted: result.accepted, decision: result.verdict?.decision }));
+    if (request.op === 'evaluate_action' && request.output?.includes('proposed-host-tool-action')) console.error('[native-browser] fixture native gate:', JSON.stringify({ accepted: result.accepted, decision: result.verdict?.decision }));
     return result; }, review: async (_config, args) => {
     reviews.push(args); const action = args.candidate.includes('proposed-host-tool-action');
     if (action && mutate && args.input.includes('after fresh target review')) {

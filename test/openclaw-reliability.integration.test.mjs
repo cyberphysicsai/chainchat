@@ -21,6 +21,7 @@ const [{ createApp }, { DIMENSIONS, FRUITS }, { engine }] = await Promise.all([
 ]);
 const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ct-active-review-diagnosis-')));
 const calls = [], diagnostics = [];
+let responseScore = 240;
 let format = 'bare', providerCap = null, truncatePlanner = false, holdPlanner = false, app, bearer;
 const answer = 'Hello! I am Cypher Tempre. I can help you explore ideas carefully and acknowledge uncertainty.';
 const plan = JSON.stringify({ queries: ['greeting'], entities: [], shapes: ['narrow'], rings: [], useReplay: false,
@@ -51,8 +52,11 @@ const upstream = http.createServer(async (req, res) => {
     return;
   }
   const assessment = JSON.parse(review);
+  assessment.scores.covenant = responseScore;
+  for (const fruit of FRUITS) assessment.fruits[fruit] = responseScore;
+  if (format === 'low-covenant') assessment.scores.covenant = 149;
   if (format === 'missing-evidence') delete assessment.usedRings;
-  if (format === 'low-score') assessment.fruits.kindness = 179;
+  if (format === 'low-score') assessment.fruits.kindness = 149;
   const assessmentText = JSON.stringify(assessment);
   const content = isReview ? (format === 'fenced' ? '```json\n' + assessmentText + '\n```' : assessmentText) : isPlanner ? plan : format === 'empty-answer' ? '' : answer;
   if (!body.stream) {
@@ -100,7 +104,9 @@ try {
     } }
     await visit(root); return output;
   }
-  for (const scenario of ['active-valid', 'active-fenced-review', 'paused-same-provider', 'active-provider-cap', 'paused-provider-cap', 'active-invalid-evidence', 'active-low-score', 'active-truncated-planner', 'active-provider-policy-hold', 'paused-low-score', 'active-empty-final', 'active-after-empty']) {
+  for (const scenario of ['active-valid', 'active-fenced-review', 'paused-same-provider', 'active-provider-cap', 'paused-provider-cap', 'active-invalid-evidence', 'active-low-score', 'active-truncated-planner', 'active-provider-policy-hold', 'paused-low-score', 'active-empty-final', 'active-after-empty', 'active-low-covenant']) {
+    responseScore = ['active-valid', 'paused-same-provider', 'active-after-empty'].includes(scenario) ? 150 : scenario === 'active-fenced-review' ? 179 : 240;
+    if (scenario === 'active-low-covenant') format = 'low-covenant';
     if (scenario === 'active-fenced-review') format = 'fenced';
     if (scenario === 'active-provider-cap') {
       format = 'bare'; providerCap = 4096;
@@ -124,6 +130,9 @@ try {
     const beforePaused = scenario.startsWith('paused-') ? await chainFiles(app.store.agents[0].root) : null;
     const start = calls.length, response = await call('/api/chat', { message: 'Please introduce yourself' });
     const currentCalls = calls.slice(start), afterRings = await fs.readFile(chainFile);
+    assert.equal(response.body.state?.gate?.threshold ?? (await call('/api/state')).body.gate.threshold, 150);
+    assert.equal((await call('/api/state')).body.gate.actionThreshold, 180);
+    if (response.status === 200) assert.equal(response.body.message.gate.threshold, 150);
     assert.ok(currentCalls.every(call => call.route === '/v1/chat/completions'),
       'The copied endpoint must normalize before every native provider request, including required review.');
     assert.ok(currentCalls.every(call => !call.privateCredentialInBody), 'API credentials cannot enter model prompts.');
@@ -204,6 +213,9 @@ try {
   assert.equal(results[11].answerReleased, true);
   assert.ok(results[11].calls.some(call => call.kind === 'answer') && results[11].calls.some(call => call.kind === 'review'),
     'Recovery must generate and independently review a real new answer, then satisfy the active commit assertions above.');
+  assert.equal(results[12].status, 422);
+  assert.equal(results[12].code, 'COVENANT_REJECTED');
+  assert.equal(results[12].answerReleased, false, 'A covenant score of 149 must still hold response generation.');
   const selected = app.store.agents[0];
   assert.equal((await engine({ op: 'verify', root: selected.root })).verified, true);
 } finally {

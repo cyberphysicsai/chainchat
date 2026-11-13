@@ -104,7 +104,7 @@ async function brokerFixture(t, options = {}) {
     nativeCalls.push(request);
     const common = { verified: true, genesis: { hash: 'genesis-one', covenant: [...FRUITS] }, head: { hash: head, index: 0 }, runtime: { mode: options.plain ? 'dormant' : 'active' } };
     if (request.op === 'prepare') return { ...common, trustedAgentContext: { name: 'Cypher Tempre' }, loadout: [], frames: [], context: [], availableEvidence: [], recentHistory: [] };
-    if (request.op === 'evaluate') { evaluations++; return { accepted: options.nativeReject !== true, verdict: { decision: options.nativeReject ? 'REJECT' : 'SEAL' } }; }
+    if (['evaluate', 'evaluate_action'].includes(request.op)) { evaluations++; return { accepted: options.nativeReject !== true, verdict: { decision: options.nativeReject ? 'REJECT' : 'SEAL' } }; }
     if (request.op !== 'inspect') throw new Error(`Unexpected mutating native operation: ${request.op}`);
     return common;
   };
@@ -133,6 +133,9 @@ test('a permitted fake tool executes only after exact semantic and native approv
   const result = await f.request('tool', { tool });
   if (result.allowed === true) { executions++; assert.equal(await fs.readFile(result.tool.params.path, 'utf8'), 'hello'); }
   assert.equal(executions, 1); assert.equal(f.reviews.length, 1); assert.equal(f.evaluations, 1);
+  assert.equal(f.reviews[0].reviewPurpose, 'action');
+  assert.equal(f.nativeCalls.filter(request => request.op === 'evaluate_action').length, 1);
+  assert.equal(f.nativeCalls.some(request => request.op === 'evaluate'), false, 'Tool calls cannot borrow the lower response gate.');
   assert.deepEqual(JSON.parse(f.reviews[0].candidate).tool, result.tool, 'Actual canonical call is precisely what the reviewer assessed.');
   assert.equal(f.nativeCalls.some(request => ['commit', 'ingest', 'seal'].includes(request.op)), false);
   assert.ok(f.events.some(event => event[1] === 'completed' && event[2].includes('native execution may now begin')));
@@ -273,7 +276,7 @@ test('own-session native goals work without host grants and receive the full sem
   const approved = await f.request('tool', { tool: update });
   assert.equal(approved.allowed, true); assert.deepEqual(approved.tool.params, update.params);
   assert.equal(f.reviews.length, 2); assert.equal(f.evaluations, 2);
-  assert.equal(f.nativeCalls.filter(request => request.op === 'evaluate').at(-1).toolObservations[0].confirmed, true);
+  assert.equal(f.nativeCalls.filter(request => request.op === 'evaluate_action').at(-1).toolObservations[0].confirmed, true);
   assert.equal(f.nativeCalls.some(request => ['commit', 'ingest'].includes(request.op)), false);
   assert.equal((await f.request('tool', { tool: call('exec', { command: 'echo no-host-grant' }, 'not-goal') })).allowed, false);
   assert.equal((await f.request('tool', { tool: call('create_goal', { objective: 'An unauthorized new objective' }, 'create') })).allowed, false);

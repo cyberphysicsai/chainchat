@@ -66,14 +66,15 @@ test('a real native gate reviews a resumed own-goal transition using verified go
   assert.ok(goalReads > 0, 'The private native goal snapshot must be freshly read before authorizing the transition.');
   assert.equal(reviews[0].input, input, 'The semantic reviewer retains the actual request, not synthetic assertions that the action already ran.');
   assert.ok(reviews[0].recentConversation.some(message => message.content === introduction), 'The completed introduction is real committed/released history.');
-  const evaluated = calls.filter(request => request.op === 'evaluate').at(-1);
+  const evaluated = calls.filter(request => request.op === 'evaluate_action').at(-1);
+  assert.equal(reviews[0].reviewPurpose, 'action');
   assert.equal(JSON.parse(evaluated.output).tool.params.status, 'complete');
   assert.equal((await engine({ op: 'inspect', root, learning: false })).head.hash, written.head.hash, 'Approving a proposal never appends a Timechain block.');
   for (const mode of ['low', 'reject']) {
     reviewMode = mode;
-    const count = calls.filter(request => request.op === 'evaluate').length;
+    const count = calls.filter(request => request.op === 'evaluate_action').length;
     assert.equal((await request('tool', { tool: tool(`critic-${mode}`) })).allowed, false);
-    assert.equal(calls.filter(request => request.op === 'evaluate').length, count, 'A rejected semantic assessment never reaches native action admission.');
+    assert.equal(calls.filter(request => request.op === 'evaluate_action').length, count, 'A rejected semantic assessment never reaches native action admission.');
   }
   assert.ok(events.some(event => event[1] === 'held'));
 });

@@ -26,6 +26,9 @@ import {
   validUsedRings,
   perspectiveTokenAllowance,
   answerTokenAllowance,
+  REVIEW_THRESHOLD,
+  RESPONSE_REVIEW_THRESHOLD,
+  reviewThresholdForPurpose,
 } from "./lib/providers.mjs";
 import { archetypes, chooseArchetypes } from "./lib/archetypes.mjs";
 import { StateStore, validateSettings, writeJSON, reconcileLoadout, defaultLoadout } from "./lib/state.mjs";
@@ -132,7 +135,8 @@ const keys = (loadout) => [
   ...loadout.senses.map((id) => (id.startsWith("sense:") ? id : `sense:${id}`)),
 ];
 
-export function strictReview(result, availableEvidence = []) {
+export function strictReview(result, availableEvidence = [], reviewPurpose = 'action') {
+  const threshold = reviewThresholdForPurpose(reviewPurpose);
   if (!result || typeof result !== "object")
     return {
       approved: false,
@@ -140,7 +144,7 @@ export function strictReview(result, availableEvidence = []) {
       scores: {},
       usedRings: [],
       rationale: "The reviewer returned no valid assessment.",
-      threshold: 180,
+      threshold,
     };
   const fruits = result.fruits || result.fruitages || {};
   const scores = result.scores || {};
@@ -153,8 +157,8 @@ export function strictReview(result, availableEvidence = []) {
     result.approved === true &&
     result.decision === "approve" &&
     validUsedRings(result.usedRings, availableEvidence) &&
-    FRUITS.every((k) => fruits[k] >= 180) &&
-    scores.covenant >= 180;
+    FRUITS.every((k) => fruits[k] >= threshold) &&
+    scores.covenant >= threshold;
   return {
     approved,
     fruitages: fruits,
@@ -163,7 +167,7 @@ export function strictReview(result, availableEvidence = []) {
     usedRings: validUsedRings(result.usedRings, availableEvidence)
       ? [...result.usedRings]
       : [],
-    threshold: 180,
+    threshold,
   };
 }
 
@@ -176,7 +180,7 @@ function describeGate(assessment, native = {}) {
     scores: assessment.scores,
     rationale: assessment.rationale,
     usedRings: assessment.usedRings,
-    threshold: 180,
+    threshold: assessment.threshold === RESPONSE_REVIEW_THRESHOLD ? RESPONSE_REVIEW_THRESHOLD : REVIEW_THRESHOLD,
     ...native,
   };
 }
@@ -357,7 +361,7 @@ export async function createApp(options = {}) {
     emergency.assertAvailable(scope?.haltEpoch);
     const selectedRecord = store.agents.find(agent => agent.root === request.root);
     if (selectedRecord && !cognitionFor(selectedRecord).learning) request = { ...request, learning: false };
-    const mutating = ["init", "commit", "ingest", "pack_import", "dormancy", "faculty_action", "maintenance", "teach", "feedback"].includes(
+    const mutating = ["init", "commit", "ingest", "pack_import", "dormancy", "faculty_action", "maintenance", "teach", "teach_response", "feedback"].includes(
       request.op,
     ) || request.op === "advanced_maintenance" && request.phase === "apply";
     if (mutating && request.preview !== true) {
@@ -370,9 +374,9 @@ export async function createApp(options = {}) {
     const abilities = {
       prepare: ["verify", "faculties", ...(request.recall === false ? [] : ["recall"])],
       chat_prepare: ["verify", "faculties"], chat_evaluate: ["gate"],
-      evaluate: ["gate"], commit: ["gate", "seal", ...(request.learning !== false && request.growth !== false ? ["growth"] : [])], ingest: ["continuum", "gate", "seal"],
+      evaluate: ["gate"], evaluate_action: ["gate"], commit: ["gate", "seal", ...(request.learning !== false && request.growth !== false ? ["growth"] : [])], ingest: ["continuum", "gate", "seal"],
       verify: ["verify"], route: ["route"], memory: ["recall"], search: ["fork"],
-      teach: ["learning"], feedback: ["learning"], faculty_action: ["faculties"],
+      teach: ["learning"], teach_response: ["learning"], feedback: ["learning"], faculty_action: ["faculties"],
       maintenance: request.action === "dream" ? ["dream"] : request.action === "train" ? ["learning", "train"] : ["recall", "index"],
       dormancy: ["cognition"], pack_import: ["faculties", "gate"],
     }[request.op];
@@ -387,7 +391,7 @@ export async function createApp(options = {}) {
       try { return await work; }
       catch (error) {
         error.stage ||= errorStage(error, ({ prepare: 'chain-preparation', chat_prepare: 'chain-preparation', inspect: 'chain-preparation',
-          verify: 'chain-preparation', evaluate: 'native-review', chat_evaluate: 'native-review', commit: 'commitment', ingest: 'commitment',
+          verify: 'chain-preparation', evaluate: 'native-review', evaluate_action: 'native-review', chat_evaluate: 'native-review', commit: 'commitment', ingest: 'commitment',
           route: 'memory-planning', memory: 'memory-planning', search: 'native-review',
           pack_import: 'loadout', faculty_action: 'loadout' })[request.op]);
         throw error;
@@ -593,7 +597,7 @@ export async function createApp(options = {}) {
       path.join(path.resolve(options.openclaw.stateDir), 'native-state'), mediaStore,
       verifyCompletion: (proof, expected) => poiBroker?.verifyNativeMediaTask(proof, expected) || false}) : null;
     poiBroker = createPoIBroker({ engine, review: async (config, args) =>
-      strictReview(await reviewer(config, args), args.availableEvidence || []),
+      strictReview(await reviewer(config, args), args.availableEvidence || [], args.reviewPurpose || 'action'),
       nativeOutputMedia,
       outputAssetMetadata: async (captured, {assertCurrent}) => {
         await assertCurrent(); const records = [];
@@ -1147,7 +1151,7 @@ export async function createApp(options = {}) {
             model: e.model,
           })),
       },
-      gate: { required: true, threshold: 180, fruits: FRUITS },
+      gate: { required: true, threshold: RESPONSE_REVIEW_THRESHOLD, actionThreshold: REVIEW_THRESHOLD, fruits: FRUITS },
     };
   }
   function sessionEquipmentView(session, record, inspected) {
@@ -1244,6 +1248,7 @@ export async function createApp(options = {}) {
     signal,
     recentConversation = historyConversation(prepared),
     toolObservations = requestSession.getStore()?.toolObservations || [],
+    reviewPurpose = 'action',
   ) {
     const assessment = strictReview(
       await reviewer(config, {
@@ -1257,8 +1262,10 @@ export async function createApp(options = {}) {
         recentConversation,
         toolObservations,
         signal,
+        reviewPurpose,
       }),
       prepared.availableEvidence || [],
+      reviewPurpose,
     );
     if (!assessment.approved)
       throw Object.assign(
@@ -1271,9 +1278,10 @@ export async function createApp(options = {}) {
       );
     return assessment;
   }
-  async function nativeEvaluation(record, prepared, exchange) {
+  async function nativeEvaluation(record, prepared, exchange, reviewPurpose = 'action') {
+    const threshold = reviewThresholdForPurpose(reviewPurpose);
     const result = await engine({
-      op: requestSession.getStore()?.memoryPaused ? "chat_evaluate" : "evaluate",
+      op: reviewPurpose === 'response' ? (requestSession.getStore()?.memoryPaused ? "chat_evaluate" : "evaluate") : "evaluate_action",
       root: record.root,
       expectedHead: prepared.head.hash,
       input: exchange.input,
@@ -1300,7 +1308,7 @@ export async function createApp(options = {}) {
           "POI_REJECTED",
           422,
         ),
-        { gate: { approved: false, decision: verdict || "REJECT", threshold: 180 },
+        { gate: { approved: false, decision: verdict || "REJECT", threshold },
           nativeVerdict: result?.verdict },
       );
     return result;
@@ -1376,7 +1384,7 @@ export async function createApp(options = {}) {
         const replayRing = replayRingFor(exchange);
         if (!(labels.senses?.length || labels.modalities?.length || replayRing !== null)) continue;
         try {
-          const feedback = await engine({ op: "teach", root: record.root, expectedHead: result.head?.hash || ringHash,
+          const feedback = await engine({ op: "teach_response", root: record.root, expectedHead: result.head?.hash || ringHash,
             input: exchange.input, output: exchange.output, scores: exchange.scores, assessment: exchange.assessment,
             usedRings: exchange.usedRings, loadout: exchange.loadout, labels, learning: true,
             ...(replayRing !== null ? { replay: { action: "accept", ring: replayRing } } : {}) });
@@ -1570,8 +1578,8 @@ export async function createApp(options = {}) {
         input: message, candidate: candidateText, covenant: prepared.genesis.covenant,
         trustedAgentContext: prepared.trustedAgentContext || null,
         hostProcessContext: reviewProcessContext(prepared),
-        availableEvidence: prepared.availableEvidence || [], recentConversation: conversation, signal,
-      }), prepared.availableEvidence || []);
+        availableEvidence: prepared.availableEvidence || [], recentConversation: conversation, signal, reviewPurpose: 'response',
+      }), prepared.availableEvidence || [], 'response');
       return { approved: judgment.approved, scores: judgment.scores, assessment: judgment, usedRings: judgment.usedRings };
     };
     const generateCandidate = async () => {
@@ -1600,7 +1608,7 @@ export async function createApp(options = {}) {
             assessment: judgment,
             usedRings: judgment.usedRings,
             perspectives: [],
-          }); } catch (error) {
+          }, 'response'); } catch (error) {
             if (["POI_REJECTED", "COVENANT_REJECTED", "SPAN_GUARD"].includes(error.code))
               return { blocked: true, name: a.name };
             throw error;
@@ -1672,11 +1680,11 @@ export async function createApp(options = {}) {
       checkCancelled(signal);
       try {
         const evaluateCandidate = async () => {
-          assessment = await assess(config, prepared, message, candidate, perspectives, signal, conversation);
+          assessment = await assess(config, prepared, message, candidate, perspectives, signal, conversation, scope.toolObservations || [], 'response');
           if (replayed && !assessment.usedRings.includes(route.antecedent.ring))
             throw err("Replay was not grounded by the current reviewer.", "REPLAY_UNSUPPORTED", 422);
           native = await nativeEvaluation(record, prepared, { input: message, output: candidate,
-            assessment, scores: assessment.scores, usedRings: assessment.usedRings, perspectives });
+            assessment, scores: assessment.scores, usedRings: assessment.usedRings, perspectives }, 'response');
         };
         if (replayed) await trace.step("replay", "Review recalled answer", evaluateCandidate);
         else await evaluateCandidate();
@@ -3224,10 +3232,11 @@ export async function createApp(options = {}) {
                   controller.signal,
                   reviewedConversation,
                   exchange.toolObservations || [],
+                  'response',
                 );
                 exchange.scores = exchange.assessment.scores;
                 exchange.usedRings = exchange.assessment.usedRings;
-                await nativeEvaluation(record, prepared, exchange);
+                await nativeEvaluation(record, prepared, exchange, 'response');
                 reviewedConversation.push(
                   { role: "user", content: exchange.input },
                   { role: "assistant", content: exchange.output },

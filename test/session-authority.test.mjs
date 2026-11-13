@@ -55,7 +55,7 @@ async function fixture(t, overrides = {}) {
       const chain = chains.get(request.root); assert.ok(chain, 'Fixture chain exists.');
       if (['inspect', 'verify'].includes(request.op)) return inspect(chain);
       if (request.op === 'prepare') return { ...inspect(chain), memories: [], context: 'Verified fixture context.', loadout: [], frames: [], computed: {}, availableEvidence: [] };
-      if (request.op === 'evaluate') return { accepted: true, verdict: { decision: 'SEAL' } };
+      if (['evaluate', 'evaluate_action'].includes(request.op)) return { accepted: true, verdict: { decision: 'SEAL' } };
       if (request.op === 'commit') { assert.equal(request.expectedHead, hash(chain.index)); chain.index++; return { accepted: true, ring: { index: chain.index, hash: hash(chain.index) } }; }
       throw new Error('Unexpected fixture operation: ' + request.op);
     },
@@ -87,7 +87,7 @@ async function fixture(t, overrides = {}) {
 
 test('paired users can create, connect and chat without a wallet or Base RPC while PoI still rejects low scores', async t => {
   let reject = false;
-  const f = await fixture(t, { review: async () => { const value = judgment(); if (reject) value.fruits.kindness = 179; return value; } });
+  const f = await fixture(t, { review: async () => { const value = judgment(); if (reject) value.fruits.kindness = 149; return value; } });
   await f.ready();
   const first = await f.request('/api/chat', { message: 'Please introduce yourself.' });
   assert.equal(first.status, 200, JSON.stringify(first.body));

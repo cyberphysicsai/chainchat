@@ -37,7 +37,7 @@ test('every visible answer wears canonical skill and passes PoI, including pause
         assert.ok(args.hostProcessContext.faculties.some(faculty => faculty.status === 'completed'));
       }
       return { decision: 'approve', approved: true, usedRings: [], scores: Object.fromEntries(DIMENSIONS.map(key => [key, 235])),
-        fruits: Object.fromEntries(FRUITS.map(key => [key, lowFruit && key === 'kindness' ? 179 : 240])), rationale: 'A patient and honest introduction.' };
+        fruits: Object.fromEntries(FRUITS.map(key => [key, lowFruit && key === 'kindness' ? 149 : 240])), rationale: 'A patient and honest introduction.' };
     } });
   app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
   t.after(async () => {
@@ -78,7 +78,7 @@ test('every visible answer wears canonical skill and passes PoI, including pause
     assert.ok(reviews.length > reviewed);
     assert.ok(native.slice(start).some(request => request.op === 'chat_prepare'));
     assert.ok(native.slice(start).some(request => request.op === 'chat_evaluate'));
-    assert.equal(native.slice(start).some(request => ['commit', 'teach', 'feedback', 'route', 'memory', 'search'].includes(request.op)), false);
+    assert.equal(native.slice(start).some(request => ['commit', 'teach', 'teach_response', 'feedback', 'route', 'memory', 'search'].includes(request.op)), false);
     assert.ok(generation.at(-1).args.system.includes('name: proof-of-interaction'));
     assert.deepEqual(await tree(root), before);
   }
