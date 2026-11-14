@@ -209,8 +209,15 @@ test('native schema settings and disabled Telegram credentials apply, survive re
     // Plugins menu. Discovery still requires the owned Gateway's health check;
     // metadata grants neither installation trust nor execution authority.
     const nativePlugins=await manager.nativePluginCatalogue();
-    const discord=nativePlugins.plugins.find(item=>item.id==='discord'&&item.packageName==='@openclaw/discord');
-    assert.ok(discord,'The actual Plugins facade must offer the external Discord integration.');
+    // Native discovery IDs may follow hosted catalogue identities. Select the
+    // declared channel and verified installation target, keeping that native ID.
+    const discord=nativePlugins.plugins.find(item=>item.channelIds?.includes('discord')&&
+      item.installSource?.expectedPluginId==='discord'&&item.installSource.source==='npm'&&/^@openclaw\/discord@/u.test(item.installSource.spec||''));
+    const short=value=>typeof value==='string'?value.slice(0,256):undefined;
+    const metadata=nativePlugins.plugins.slice(0,96).map(item=>({id:short(item.id),packageName:short(item.packageName),
+      channelIds:Array.isArray(item.channelIds)?item.channelIds.slice(0,16).map(short):undefined,
+      installSource:item.installSource?Object.fromEntries(['source','spec','packageName','version','expectedPluginId'].map(key=>[key,short(item.installSource[key])]).filter(([,value])=>value!==undefined)):undefined}));
+    assert.ok(discord,'The actual Plugins facade must offer the external Discord integration. Metadata: '+JSON.stringify(metadata).slice(0,16000));
     assert.equal(discord.installed,false);assert.equal(discord.enabled,false);
     assert.ok(discord.channelIds.includes('discord'));assert.equal(discord.requiresExplicitTrust,true);
     assert.equal(discord.installSource.source,'npm');assert.equal(discord.installSource.expectedPluginId,'discord');
