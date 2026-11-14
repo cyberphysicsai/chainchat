@@ -10,6 +10,7 @@ import { createOpenClawGateway } from '../openclaw/gateway.mjs';
 import { createPoIBroker } from '../openclaw/broker.mjs';
 import { engine } from '../lib/engine.mjs';
 import { FRUITS, DIMENSIONS } from '../lib/providers.mjs';
+import {trustedPluginRpcValidators} from '../lib/trusted-plugin-manager.mjs';
 
 const packageRoot = process.env.CT_OPENCLAW_PACKAGE, nodePath = process.env.CT_OPENCLAW_NODE;
 test('real native goals, settings, scoped tools and durable app restarts retain enforcement and key isolation', {
@@ -198,7 +199,18 @@ test('native schema settings and disabled Telegram credentials apply, survive re
     const catalogue = await manager.nativeChannels({mode:'catalogue',identity});
     const telegram = catalogue.items.find(item=>item.id==='telegram');
     assert.ok(telegram?.installed,'The pinned native Telegram channel must be discovered dynamically.');
-    assert.ok(catalogue.items.some(item=>item.id==='discord'),'The native catalogue must include Discord without hard-coded menu rows.');
+    // In 2026.11.3 Discord is an official external plugin, not a bundled
+    // installed channel. It belongs in the native Plugins catalogue until the
+    // owner installs it; channel setup must not invent an executable adapter.
+    const pluginReader=manager.registerNativeService({id:'native-channel-catalogue-fixture',methods:{
+      'plugins.list':trustedPluginRpcValidators()['plugins.list'],
+    }});
+    const nativePlugins=await pluginReader.request('plugins.list',{});
+    const discord=nativePlugins.plugins.find(item=>item.id==='discord'||item.packageName==='@openclaw/discord');
+    assert.ok(discord,'The native Plugins catalogue must offer the official external Discord integration.');
+    assert.equal(discord.installed,false);assert.equal(discord.enabled,false);
+    assert.ok(discord.install,'The uninstalled Discord integration must retain its native installation source.');
+    assert.equal(catalogue.items.some(item=>item.id==='discord'&&item.installed),false,'An uninstalled plugin must not be presented as a usable channel.');
     const field = telegram.credentialFields.find(row=>row.path.length===3&&row.path[2]==='botToken');
     assert.ok(field,'The native Telegram schema must expose its write-only bot credential.');
     const configured = await manager.nativeChannels({mode:'setup',identity,channelId:'telegram',accountId:telegram.defaultAccountId,

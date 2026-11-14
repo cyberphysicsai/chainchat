@@ -850,6 +850,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
         }
         const proposed = keySafeOverlay(base, patch);
         const projected = await nativeSecretStore.project(proposed);
+        await channelAuthority?.admission?.assertCurrent?.();
         // New credential environment variables do not exist in the old child.
         // Validate them in a fresh owned native process before accepting the
         // overlay/vault transaction. Ordinary edits validate before restart.
@@ -890,7 +891,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     rpc:nativeRpc,schema:()=>nativeRpc('config.schema',{}),config:()=>nativeRpc('config.get',{}),plugins:()=>nativeRpc('plugins.list',{}),
     authorize:async action=>{
       if(!channelAuthority?.authorize)throw fail('An owner-authorized channel action is required.','OPENCLAW_CHANNEL_HELD',403);
-      return channelAuthority.authorize(action);
+      const admission=await channelAuthority.authorize(action);channelAuthority.admission=admission;return admission;
     },
     secrets:{targets:nativeSecretTargets,redact:value=>redactNativeControl(value,privateServiceSecrets())},
     applyConfig:async({patch,secrets,baseHash,channelId})=>{
