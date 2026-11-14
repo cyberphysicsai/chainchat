@@ -337,7 +337,7 @@ export async function createApp(options = {}) {
     serviceOwner = randomBytes(24).toString('hex');
     await writeJSON(ownerFile, { version: 1, id: serviceOwner });
   }
-  const protectedToolRoots = () => [appRoot, store.root, ...store.agents.map(agent => agent.root)];
+  const protectedToolRoots = () => [appRoot, store.root, ...(options.openclaw?.stateDir ? [path.resolve(options.openclaw.stateDir)] : []), ...store.agents.map(agent => agent.root)];
   const authorityKey = identity => `${identity.agentId}:${identity.genesisHash}`;
   const requestSession = new AsyncLocalStorage();
   const authority = createSessionAuthority({ resolveToken: token => sessions.get(token),
@@ -1921,6 +1921,7 @@ export async function createApp(options = {}) {
     const pins = JSON.parse(await fs.readFile(path.join(appRoot, 'openclaw/upstream-lock.json'), 'utf8'));
     trustedPlugins = await createTrustedPluginManager({ directory: path.join(store.root, 'trusted-native-plugins'),
       packageRoot: options.openclaw.packageRoot, upstreamIntegrity: pins.openclaw.integrity,
+      catalogueView:openclaw.nativePluginCatalogue?()=>openclaw.nativePluginCatalogue():undefined,
       mandatoryPluginIds: ['cypher-tempre-poi', 'browser'], contextEngineId: 'cypher-tempre-poi',
       mandatoryLoadPaths: [options.openclaw.pluginPath || path.join(appRoot, 'openclaw/plugin')],
       rpc: (method, params) => pluginTransport.request(method, params),
@@ -2324,6 +2325,10 @@ export async function createApp(options = {}) {
             if (!openclaw?.nativeSecrets) return send(200, {bindings: [], targets: [], available: false});
             return send(200, await openclaw.nativeSecrets({identity: await nativeControlIdentity(session), action: 'list'}));
           }
+          if (req.method === 'GET' && url.pathname === '/api/openclaw/channels') {
+            if(!openclaw?.nativeChannels)return send(200,{items:[],available:false});
+            return send(200,await openclaw.nativeChannels({identity:await nativeControlIdentity(session),mode:'catalogue'}));
+          }
           if (req.method === 'GET' && url.pathname === '/api/openclaw/native-capabilities') {
             const identity = await nativeControlIdentity(session, true);
             return send(200, {toolAuthority: toolPermissions.get(authorityKey(identity)), catalogue: await nativeCatalogueFor(identity),
@@ -2521,6 +2526,30 @@ export async function createApp(options = {}) {
               throw err('Unknown automation operation.');
             }));
           }
+          if (['/api/openclaw/channels/setup','/api/openclaw/channels/action'].includes(url.pathname)) {
+            await requireLocalAccess();
+            if(!openclaw?.nativeChannels)throw err('Install the current OpenClaw edition to configure channels.','OPENCLAW_REQUIRED',409);
+            const identity=await nativeControlIdentity(session,true),record=agentFor(session);
+            if(busy.size||session.controllers.size)throw err('Wait for active agent work before changing native channels.','AGENT_BUSY',409);
+            const setup=url.pathname.endsWith('/setup');
+            const authorize=async action=>{
+              await checkSkillOwner(session,identity);
+              const permit=await authorizeServiceAction({record},action);
+              return {approved:true,assertCurrent:async()=>{
+                emergency.assertAvailable();await checkSkillOwner(session,identity);
+                const now=await engine({op:'inspect',root:record.root,learning:false});
+                if(permit.expiresAt<Date.now()||now.head.hash!==permit.expectedHead||now.genesis.hash!==permit.genesisHash)
+                  throw err('The owner or chain changed during channel review. Retry the exact action.','STALE_HEAD',409);
+              }};
+            };
+            if(Object.keys(input).some(key=>!(setup?['channelId','accountId','values','secretValues','baseHash']:['action','channelId','accountId','requestId','notify','bootstrapCommandOwner','force','timeoutMs','challengeId']).includes(key)))
+              throw err('Use the exact native channel setup or lifecycle fields.');
+            if(input.secretValues!==undefined&&!Array.isArray(input.secretValues))throw err('Use the dedicated native credential fields.');
+            for(const change of input.secretValues || [])if(typeof change?.value==='string'&&change.value)serviceSecrets.add(change.value);
+            const result=await exclusive(record,()=>openclaw.nativeChannels({...input,identity,mode:setup?'setup':'action',
+              authorize,authority:toolPermissions.get(authorityKey(identity)).grant}));
+            await requireLocalAccess();assertServiceIsolation(result);return send(200,result);
+          }
           if (url.pathname === '/api/openclaw/channel/connect') {
             if (!automation || !openclaw?.configureManagedServices) throw err('Install the OpenClaw edition to configure channels.', 'OPENCLAW_REQUIRED', 409);
             if (Object.keys(input).some(key => !['channelId', 'accountId', 'pluginId', 'config', 'credentials'].includes(key)) ||
@@ -2541,7 +2570,7 @@ export async function createApp(options = {}) {
             }));
           }
           if (url.pathname === "/api/openclaw/config") {
-            if (Object.keys(input).some(key => !["patch", "revision"].includes(key)))
+            if (Object.keys(input).some(key => !["patch", "removePaths", "revision", "baseHash"].includes(key)))
               throw err("Only a native configuration patch and its current revision are accepted.");
             await requireLocalAccess();
             if (busy.size || session.controllers.size)
@@ -2549,7 +2578,7 @@ export async function createApp(options = {}) {
             assertCredentialIsolation(session.provider || {}, input.patch);
             const identity = await nativeControlIdentity(session);
             const authority = identity.agentId ? toolPermissions.get(authorityKey(identity)).grant : disabledToolAuthority();
-            const result = await openclaw.updateControls({ patch: input.patch, revision: input.revision, authority, identity });
+            const result = await openclaw.updateControls({ patch: input.patch, removePaths: input.removePaths, revision: input.revision, baseHash: input.baseHash, authority, identity });
             await requireLocalAccess();
             return send(200, result);
           }
@@ -2666,7 +2695,7 @@ export async function createApp(options = {}) {
           }
           if (url.pathname === '/api/openclaw/secrets') {
             await requireLocalAccess();
-            if (!openclaw?.nativeSecrets || Object.keys(input).some(key => !['action', 'name', 'value', 'target'].includes(key)) ||
+            if (!openclaw?.nativeSecrets || Object.keys(input).some(key => !['action', 'name', 'value', 'target', 'remember'].includes(key)) ||
                 !['list', 'set', 'remove'].includes(input.action)) throw err('Use the dedicated native credential controls.', 'OPENCLAW_NATIVE_SECRET_INVALID', 400);
             if (input.action !== 'list' && busy.size) throw err('Wait for active agent work before changing native credentials.', 'AGENT_BUSY', 409);
             if (typeof input.value === 'string' && input.value) serviceSecrets.add(input.value);

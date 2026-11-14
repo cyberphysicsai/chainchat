@@ -125,7 +125,7 @@ test('actual native image jobs deliver reviewed owned output and report failed j
     await manager.nativeAuth({ identity, action: 'key', provider: 'openai', apiKey: 'sk-synthetic-async-media-key' });
     await manager.setNativeModel(identity, 'openai/fixture');
     const controls = await manager.describeControls(identity);
-    await manager.updateControls({ revision: controls.config.revision, patch: { agents: { defaults: { mediaModels: { image: 'openai/gpt-image-2' } } } } });
+    await manager.updateControls({ revision: controls.config.revision, baseHash: controls.config.baseHash, patch: { agents: { defaults: { mediaModels: { image: 'openai/gpt-image-2' } } } } });
     const input = 'Use the explicitly admitted native image-generation tool for a peaceful image and wait for its reviewed completion.';
     phase = 'first-primary';
     const started = await manager.generateNative(config, { messages: [{ role: 'user', content: input }], maxTokens: 512,

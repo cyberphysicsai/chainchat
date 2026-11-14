@@ -60,7 +60,7 @@ test('actual native image SDK uses the configured local vision profile and immut
     await manager.nativeAuth({ identity, action: 'key', provider: 'fixture-vision', apiKey: 'synthetic-native-image-key' });
     await manager.setNativeModel(identity, 'fixture-vision/vision');
     const controls = await manager.describeControls(identity);
-    await manager.updateControls({ revision: controls.config.revision, patch: { tools: { media: {
+    await manager.updateControls({ revision: controls.config.revision, baseHash: controls.config.baseHash, patch: { tools: { media: {
       models: [{ provider: 'fixture-vision', model: 'vision', capabilities: ['image'] }], image: { enabled: true },
     } } } });
     const result = await manager.analyzeNativeMedia({ identity, assetId: metadata.id, operation: 'describe-image' });

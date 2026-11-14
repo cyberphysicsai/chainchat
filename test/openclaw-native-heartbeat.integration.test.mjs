@@ -34,7 +34,7 @@ test('actual native heartbeat requires owner enrollment and every accepted itera
   // Current upstream persists heartbeat monitors in Automations; a cadence
   // cannot tick while the owner's native scheduler remains disabled.
   await manager.enableManagedAutomation();
-  const controls=await manager.describeControls(identity);await manager.updateControls({revision:controls.config.revision,patch:{logging:{consoleLevel:'debug'},agents:{defaults:{heartbeat:{every:'3s',timeoutSeconds:30,prompt:'CT_REAL_HEARTBEAT: Please say you can help with care and honesty.',target:'none'}}}}});
+  const controls=await manager.describeControls(identity);await manager.updateControls({revision:controls.config.revision,baseHash:controls.config.baseHash,patch:{logging:{consoleLevel:'debug'},agents:{defaults:{heartbeat:{every:'3s',timeoutSeconds:30,prompt:'CT_REAL_HEARTBEAT: Please say you can help with care and honesty.',target:'none'}}}}});
   const liveConfig=(await manager.describeControls(identity)).nativeConfig.config;
   assert.equal(liveConfig.cron.enabled,true);
   const heartbeatView=value=>value?{every:value.every,timeoutSeconds:value.timeoutSeconds,agentId:value.agentId,target:value.target}:null;

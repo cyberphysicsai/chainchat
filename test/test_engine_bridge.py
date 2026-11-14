@@ -582,7 +582,7 @@ class EngineBridgeTests(unittest.TestCase):
         pack["faculties"][0]["function"] += " altered"
         self.assert_code("PACK_HASH_MISMATCH", lambda: self.import_pack(pack))
         assessment = self.exchange()["assessment"]
-        assessment["fruitages"]["love"] = 179
+        assessment["fruitages"]["love"] = 149
         self.assert_code("COVENANT_REJECTED", lambda: self.import_pack(assessment=assessment))
         pack = self.pack()
         pack["faculties"][0]["code"] = "print('never executed')"

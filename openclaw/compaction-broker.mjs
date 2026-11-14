@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { assertCredentialIsolation, FRUITS, DIMENSIONS } from '../lib/providers.mjs';
+import { assertCredentialIsolation, FRUITS, DIMENSIONS, REVIEW_THRESHOLD } from '../lib/providers.mjs';
 
 const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 const fail = () => Object.assign(new Error('Native compaction was not authorized.'), { code: 'OPENCLAW_COMPACTION_HELD', status: 422 });
@@ -88,8 +88,8 @@ export function createCompactionBroker({ engine, review, generateSummary, getPar
       const invoke = () => review(claim.parent.config, args);
       const judgment = await (claim.parent.context.run ? claim.parent.context.run(invoke) : invoke());
       const fruits = judgment?.fruitages || judgment?.fruits || {};
-      if (judgment?.approved !== true || !FRUITS.every(key => Number.isInteger(fruits[key]) && fruits[key] >= 180 && fruits[key] <= 255) ||
-          !DIMENSIONS.every(key => Number.isInteger(judgment.scores?.[key]) && judgment.scores[key] >= 0 && judgment.scores[key] <= 255) || judgment.scores.covenant < 180) throw fail();
+      if (judgment?.approved !== true || !FRUITS.every(key => Number.isInteger(fruits[key]) && fruits[key] >= REVIEW_THRESHOLD && fruits[key] <= 255) ||
+          !DIMENSIONS.every(key => Number.isInteger(judgment.scores?.[key]) && judgment.scores[key] >= 0 && judgment.scores[key] <= 255) || judgment.scores.covenant < REVIEW_THRESHOLD) throw fail();
       const evaluated = await native(claim.parent, { op: 'evaluate_summary', root: claim.parent.context.root,
         expectedHead: claim.expectedHead, input: args.input, output: claim.summary, scores: judgment.scores, assessment: judgment,
         usedRings: judgment.usedRings || [], sourceData: claim.sourceData, loadout: claim.parent.context.loadout, learning: false });

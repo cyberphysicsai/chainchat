@@ -62,7 +62,7 @@ test('complete bare and singly fenced review objects retain every original gate 
     '```javascript\n' + raw + '\n```', '```json\n' + raw + '\n```\n```json\n' + raw + '\n```',
     JSON.stringify([good()]), JSON.stringify(raw), 'null']) assert.throws(() => parseReview(text), { code: 'GATE_INVALID_REVIEW' });
   for (const fruit of FRUITS) {
-    const low = good(); low.fruits[fruit] = 179;
+    const low = good(); low.fruits[fruit] = 149;
     assert.equal(parseReview('```json\n' + JSON.stringify(low) + '\n```').approved, false, fruit);
   }
   const missing = good(); delete missing.usedRings;
@@ -88,7 +88,7 @@ test('a rejection or low fruit score is final even when another required field i
   for (const kind of ['reject', 'low-fruit', 'missing-evidence', 'reject-missing', 'low-missing']) await t.test(kind, async t => {
     const value = good();
     if (kind.startsWith('reject')) value.decision = 'reject';
-    if (kind.startsWith('low')) value.fruits.joy = 179;
+    if (kind.startsWith('low')) value.fruits.joy = 149;
     if (kind === 'missing-evidence' || kind.endsWith('-missing')) delete value.usedRings;
     const mock = await provider(t, () => answer(JSON.stringify(value)));
     if (kind === 'missing-evidence' || kind.endsWith('-missing')) {

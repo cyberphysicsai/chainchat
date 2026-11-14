@@ -131,7 +131,7 @@ try {
     const start = calls.length, response = await call('/api/chat', { message: 'Please introduce yourself' });
     const currentCalls = calls.slice(start), afterRings = await fs.readFile(chainFile);
     assert.equal(response.body.state?.gate?.threshold ?? (await call('/api/state')).body.gate.threshold, 150);
-    assert.equal((await call('/api/state')).body.gate.actionThreshold, 180);
+    assert.equal((await call('/api/state')).body.gate.actionThreshold, 150);
     if (response.status === 200) assert.equal(response.body.message.gate.threshold, 150);
     assert.ok(currentCalls.every(call => call.route === '/v1/chat/completions'),
       'The copied endpoint must normalize before every native provider request, including required review.');

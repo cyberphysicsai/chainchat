@@ -5,16 +5,16 @@ import { safeInvocationError, invocationError } from '../lib/runtime-errors.mjs'
 import { DIMENSIONS, FRUITS } from '../lib/providers.mjs';
 
 test('connected threshold notes distinguish response and action floors without changing compatibility', () => {
-  const current = gateRequirementsNote({ required: true, threshold: 150, actionThreshold: 180 });
+  const current = gateRequirementsNote({ required: true, threshold: 150, actionThreshold: 150 });
   assert.match(current, /response.*\(150\/255\)/);
-  assert.match(current, /Tool and action reviews retain a 180\/255 minimum/);
+  assert.match(current, /Tool and action reviews retain a 150\/255 minimum/);
   assert.doesNotMatch(current, /Install ChainChat/);
   assert.equal(supportedBridgeVersion('1.0.4'), true);
   assert.equal(supportedBridgeVersion('1.0.7'), true);
   assert.equal(supportedBridgeVersion('1.0.8'), true);
   const legacy = gateRequirementsNote({ required: true, threshold: 180 });
   assert.match(legacy, /server-enforced.*\(180\/255\)/);
-  assert.match(legacy, /Install ChainChat 1\.0\.8.*150\/255/);
+  assert.match(legacy, /Install ChainChat 1\.1\.0.*150\/255/);
   assert.match(legacy, /refreshing this page alone does not update the local runtime/);
 });
 
@@ -34,7 +34,7 @@ test('private gate-error handoff retains the trusted response or action threshol
   const values = { scores: Object.fromEntries(DIMENSIONS.map(key => [key, 149])),
     fruits: Object.fromEntries(FRUITS.map(key => [key, 149])) };
   for (const code of ['COVENANT_REJECTED', 'POI_REJECTED']) {
-    for (const threshold of [150, 180]) {
+    for (const threshold of [150, 180, 190, 255]) {
       const original = { code, gate: { approved: false, threshold, ...values, rationale: 'private text' } };
       const snapshot = safeInvocationError(original), restored = invocationError(snapshot);
       assert.equal(snapshot.gate.threshold, threshold);
@@ -44,9 +44,9 @@ test('private gate-error handoff retains the trusted response or action threshol
       assert.equal(JSON.stringify(snapshot).includes('private text'), false);
       assert.equal(original.gate.approved, false, 'Diagnostic policy labels cannot change the assessment.');
     }
-    for (const threshold of [undefined, '150', 149, 181, 'private-url-or-key']) {
+    for (const threshold of [undefined, '150', 149, 256, 'private-url-or-key']) {
       const snapshot = safeInvocationError({ code, gate: { approved: false, threshold, ...values } });
-      assert.equal(snapshot.gate.threshold, 180, 'An unknown legacy diagnostic never invents the relaxed policy.');
+      assert.equal(snapshot.gate.threshold, 150, 'Unknown diagnostics use the trusted host action threshold.');
       assert.equal(JSON.stringify(snapshot).includes('private-url-or-key'), false);
     }
   }

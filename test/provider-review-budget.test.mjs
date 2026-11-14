@@ -120,7 +120,7 @@ test('no configured review context room is a safe context hold before inference,
 test('context fitting cannot turn a low-fruit verdict into approval or trigger a review retry', async t => {
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async () => {
-    calls++; const value = approved(); value.fruits.kindness = 179;
+    calls++; const value = approved(); value.fruits.kindness = 149;
     return new Response(JSON.stringify(completion('compatible', JSON.stringify(value), false)));
   });
   assert.equal((await review({ provider: 'compatible', model: 'fixture', contextWindow: 16384,

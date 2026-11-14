@@ -852,7 +852,7 @@ test("review rejects every missing, non-integer, out-of-range or low fruitage sc
   assert.equal(parseReview(JSON.stringify(goodReview())).approved, true);
   for (const fruit of FRUITS) {
     const low = goodReview();
-    low.fruits[fruit] = 179;
+    low.fruits[fruit] = 149;
     assert.equal(parseReview(JSON.stringify(low)).approved, false, fruit);
     for (const bad of [null, "230", true, 256, -1, 180.5]) {
       const value = goodReview();
@@ -996,7 +996,7 @@ test('verified process facts cannot override a valid rejection, low fruit or fab
   const config = { provider: 'compatible', model: 'fixture', baseUrl: mock.baseUrl };
   assert.equal((await review(config, args)).approved, false);
   assert.equal(mock.requests.length, 1, 'A semantic rejection must not be retried to obtain approval.');
-  assessment = { ...goodReview(), fruits: { ...goodReview().fruits, faith: 179 } };
+  assessment = { ...goodReview(), fruits: { ...goodReview().fruits, faith: 149 } };
   assert.equal((await review(config, args)).approved, false);
   assessment = { ...goodReview(), usedRings: [99] };
   await assert.rejects(review(config, args), { code: 'GATE_INVALID_EVIDENCE' });
@@ -1118,7 +1118,7 @@ test("identity metadata does not override a rejection or authorize fabricated hi
     covenant: [...FRUITS], trustedAgentContext: verifiedAgentFixture() };
   const config = { provider: "compatible", model: "fixture", baseUrl: mock.baseUrl };
   assert.equal((await review(config, args)).approved, false);
-  result = { ...goodReview(), fruits: { ...goodReview().fruits, faith: 179 } };
+  result = { ...goodReview(), fruits: { ...goodReview().fruits, faith: 149 } };
   assert.equal((await review(config, args)).approved, false);
   result = { ...goodReview(), usedRings: [99] };
   await assert.rejects(review(config, args), { code: "GATE_INVALID_EVIDENCE" });

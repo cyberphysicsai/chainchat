@@ -1172,15 +1172,19 @@ test("ending a bridge session cancels model work and prevents commitment", async
 });
 
 
-test('response review uses 150 while an assessment cannot lower the action policy', () => {
+test('response and action reviews use 150 while assessment fields cannot lower either policy', () => {
   const result = goodReview();
-  result.scores.covenant = 179;
-  for (const fruit of FRUITS) result.fruits[fruit] = 179;
-  result.threshold = 150; result.reviewPurpose = 'response';
+  result.scores.covenant = 149;
+  for (const fruit of FRUITS) result.fruits[fruit] = 149;
+  result.threshold = 0; result.reviewPurpose = 'response';
   assert.equal(strictReview(result).approved, false);
-  assert.equal(strictReview(result).threshold, 180);
-  assert.equal(strictReview(result, [], 'response').approved, true);
+  assert.equal(strictReview(result).threshold, 150);
+  assert.equal(strictReview(result, [], 'response').approved, false);
   assert.equal(strictReview(result, [], 'response').threshold, 150);
+  result.scores.covenant = 150;
+  for (const fruit of FRUITS) result.fruits[fruit] = 150;
+  assert.equal(strictReview(result).approved, true);
+  assert.equal(strictReview(result, [], 'response').approved, true);
 });
 
 test('chat response boundaries reach the model reviewer, native gate and conversation commit', async t => {
@@ -1196,7 +1200,7 @@ test('chat response boundaries reach the model reviewer, native gate and convers
     assert.equal(reply.status, 200, JSON.stringify(reply.body));
     assert.equal(reply.body.message.gate.threshold, 150);
     assert.equal(reply.body.state.gate.threshold, 150);
-    assert.equal(reply.body.state.gate.actionThreshold, 180);
+    assert.equal(reply.body.state.gate.actionThreshold, 150);
     const evaluations = f.calls.filter(call => call.op === 'evaluate');
     const commits = f.calls.filter(call => call.op === 'commit');
     assert.ok(evaluations.length > 0); assert.equal(commits.length, 1);

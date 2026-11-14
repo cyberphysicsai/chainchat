@@ -21,7 +21,9 @@ import { nativeApiKeyStatus, nativeModelCatalogue, nativeModelRef, requireNative
 import {NativeRunBindings} from '../lib/native-run-bindings.mjs';
 import {validateNativeAttachments} from '../lib/native-attachments.mjs';
 import {parseNativeMediaCompletion} from '../lib/native-media-completion.mjs';
-import {NativeSecrets} from '../lib/native-secrets.mjs';
+import {NativeSecrets,nativeSecretTargets} from '../lib/native-secrets.mjs';
+import {createNativeChannels} from '../lib/native-channels.mjs';
+import {loadOfficialChannelCatalogue,mergeNativeChannelCatalogue} from '../lib/native-channel-catalogue.mjs';
 import {createNativeHeartbeatScratch,readNativeHeartbeatMonitor} from '../lib/native-heartbeat-scratch.mjs';
 import {waitForNativeSessionIdle} from '../lib/native-session-idle.mjs';
 import {assertManagedRuntime} from './runtime-security.mjs';
@@ -57,6 +59,19 @@ export function nativeLifecycleDiagnostic(event, generation, code, signal) {
   const safeCode = code === null ? 'none' : Number.isSafeInteger(code) && code >= 0 && code <= 0xffffffff ? code : 'UNKNOWN';
   const safeSignal = signal === null ? 'none' : ['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGHUP', 'SIGABRT', 'SIGSEGV', 'SIGBUS', 'SIGILL'].includes(signal) ? signal : 'UNKNOWN';
   return `[chainchat] native lifecycle event=${safeEvent} generation=${safeGeneration} code=${safeCode} signal=${safeSignal}\n`;
+}
+export function nativeEnforcementHealthDiagnostic(error, result, duringStartup=false, elapsedMs) {
+  const contextReasons=new Set(['FACTORY_FAILED','BOOTSTRAP_FAILED','INGEST_FAILED','ASSEMBLE_FAILED','COMPACT_FAILED','COMMIT_TURN_FAILED']);
+  const transportCodes=new Set(['OPENCLAW_CONTROL_TIMEOUT','OPENCLAW_CONTROL_CLOSED','OPENCLAW_CONTROL_AUTH','TIMEOUT','REQUEST_TIMEOUT']);
+  let reason='PROBE_FAILED';
+  if(contextReasons.has(result?.reasonCode))reason=result.reasonCode;
+  else if(result?.nativeCompletionPolicy===false)reason='POLICY_MISMATCH';
+  else if(result&&(result.healthy!==true||result.version!==1||result.pluginId!=='cypher-tempre-poi'||result.engineId!=='cypher-tempre-poi'))reason='INVALID_HEALTH_RESULT';
+  else if(transportCodes.has(error?.code))reason=error.code;
+  else if(['GatewayClientRequestTimeoutError','GatewayProtocolRequestTimeoutError'].includes(error?.name))reason='PROBE_TIMEOUT';
+  else if(typeof error?.message==='string'&&/\b(?:request timeout|timed out|timeout waiting)\b/iu.test(error.message.slice(0,1024)))reason='PROBE_TIMEOUT';
+  const elapsed=Number.isSafeInteger(elapsedMs)&&elapsedMs>=0&&elapsedMs<=86400000?` elapsedMs=${elapsedMs}`:'';
+  return `[chainchat] mandatory health phase=${duringStartup?'startup':'runtime'} reason=${reason}${elapsed}\n`;
 }
 export async function readNativeReviewedCandidate(broker, claimId, generatedText) {
   try { return await broker.readCandidate({claimId}); }
@@ -427,6 +442,8 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
   if(nativeSourcesReady)resolveNativeReadiness(true);
   const nativeIdentityKeys = new Set();
   const nativeSecretStore = new NativeSecrets(directory);
+  let stagedNativeSecrets = null, channelAuthority = null;
+  const abortStagedSecrets = async () => { const staged=stagedNativeSecrets;stagedNativeSecrets=null;await staged?.abort(); };
   const runBindings = new NativeRunBindings(directory, {inspectCron:id=>nativeRpc('cron.get',{id}),inspectSource:inspectNativeSource,
     inspectSession:key=>nativeRpc('sessions.describe',{key,includeDerivedTitles:false,includeLastMessage:false}),parseMediaCompletion:parseNativeMediaCompletion});
   const privateServiceSecrets = () => [gatewayToken, proxyToken, broker.token,...nativeCredentialValues,...nativeSecretStore.values(), ...(serviceSecrets() || []), ...(browserService?.redactionSecrets?.() || [])]
@@ -707,7 +724,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
         OPENCLAW_NO_RESPAWN: "1", CHAINCHAT_GATEWAY_TOKEN: gatewayToken,
         CHAINCHAT_PROVIDER_TOKEN: proxyToken, CHAINCHAT_BROKER_TOKEN: broker.token,
         NO_PROXY: "127.0.0.1,localhost,::1" });
-      if (!Object.values(managedServices.channels || {}).some(channel => channel && channel.enabled !== false)) environment.OPENCLAW_SKIP_CHANNELS = '1';
+      if (!Object.values(configuration.channels || {}).some(channel => channel && channel.enabled !== false)) environment.OPENCLAW_SKIP_CHANNELS = '1';
       const serviceEnv = serviceEnvironmentSnapshot();
       Object.assign(environment, serviceEnv.values);
       Object.assign(environment,nativeSecretProjection.environment);
@@ -800,6 +817,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     rpc: nativeRpc, getRuntime: status, readOverlay: () => readControlOverlay(directory),
     nativeCapabilities,
     nativeProvider:()=>Boolean(nativeSelection),
+    abortApply:abortStagedSecrets,
     sanitize: value => redactNativeControl(value, [gatewayToken, proxyToken, broker.token, identity?.proxyToken, identity?.gatewayToken,
       ...privateServiceSecrets()]),
     async runSystemCommand({ sessionKey, command }) {
@@ -827,11 +845,12 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       const next = { version: 1, patch, revision: createHash('sha256').update(JSON.stringify(patch)).digest('hex') };
       await atomicJson(path.join(directory, 'controls.json'), next); return next;
     },
-    async applyOverlay(patch) {
+    async applyOverlay(patch, {baseHash} = {}) {
       if (active) throw fail('Wait for the current model run before applying settings.', 'OPENCLAW_CONTROL_BUSY', 409);
       validateControlPatch(Object.keys(patch).length ? patch : { ui: {} }, { allowHostConfiguration: true,
         nativeCapabilities: {enabled:true,acknowledged:true,settings:['*']},nativeProvider:true });
       const current = await nativeRpc('config.get', {});
+      if (baseHash && baseHash !== current.hash) throw fail('Native settings changed. Reload before saving.', 'OPENCLAW_CONFIG_STALE', 409);
       // Native config.set performs the pinned runtime's own full schema and
       // secret-reference validation before writing its managed config file.
       const base = lastConfiguration;
@@ -843,21 +862,73 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
           if (!nativeModelRef(utility)) throw nativeKeyRequired();
           await assertNativeKeyRoute(utility);
         }
-        if (patch.memory?.search?.enabled && patch.memory.search.provider !== 'local')
-          throw fail('Managed native memory search requires local embeddings.', 'OPENCLAW_SETTING_GUARDED', 403);
         const proposed = keySafeOverlay(base, patch);
-        await nativeRpc('config.set', { raw: JSON.stringify(proposed), baseHash: current.hash });
+        const projected = await nativeSecretStore.project(proposed);
+        await channelAuthority?.admission?.assertCurrent?.();
+        // New credential environment variables do not exist in the old child.
+        // Validate them in a fresh owned native process before accepting the
+        // overlay/vault transaction. Ordinary edits validate before restart.
+        if (!stagedNativeSecrets) await nativeRpc('config.set', { raw: JSON.stringify(projected.config), baseHash: current.hash });
         await stopChild(); await start();
+        const readback=await nativeRpc('config.get',{});
+        if (readback.valid!==true) throw fail('The native runtime rejected this configuration.', 'OPENCLAW_CONFIG_REJECTED',422);
       } catch (error) {
         const safe = redactNativeControl({ code: error?.code || 'OPENCLAW_CONFIG_APPLY_FAILED', message: String(error?.message || 'Native configuration apply failed.') },
           [gatewayToken, proxyToken, broker.token, active?.config?.apiKey, ...privateServiceSecrets()].filter(Boolean));
         onDiagnostic?.(`[chainchat] native settings apply held ${JSON.stringify(safe)}\n`);
-        pendingOverlay = previous;
+        await abortStagedSecrets();pendingOverlay = previous;
         await stopChild(); await start().catch(() => {});
         throw fail('OpenClaw did not apply the settings; the previous managed settings were restored.', 'OPENCLAW_CONFIG_REJECTED', 422);
       } finally { pendingOverlay = null; }
     },
   });
+  async function withStagedNativeSecrets(changes,proposed,schema,operation) {
+    if (!changes.length) return operation();
+    const previous=await readControlOverlay(directory);
+    for(const change of changes)if(typeof change.value==='string'&&change.value)nativeCredentialValues.add(change.value);
+    stagedNativeSecrets=await nativeSecretStore.stage(changes,proposed,schema);
+    try {
+      const result=await operation();
+      assertRunningAllowed();
+      await stagedNativeSecrets.commit();stagedNativeSecrets=null;
+      return result;
+    } catch(error) {
+      await abortStagedSecrets();
+      pendingOverlay=previous.patch;
+      try {await atomicJson(path.join(directory,'controls.json'),previous);await stopChild();await start();}
+      catch {await stopChild();throw fail('Native configuration recovery requires local inspection. The owned runtime was stopped.','OPENCLAW_CONFIG_RECOVERY_REQUIRED',503);}
+      finally {pendingOverlay=null;}
+      throw error;
+    }
+  }
+  let officialChannelCatalogue;
+  async function readNativePluginCatalogue() {
+    const native=await nativeRpc('plugins.list',{});
+    officialChannelCatalogue??=loadOfficialChannelCatalogue(upstream);
+    return mergeNativeChannelCatalogue(native,await officialChannelCatalogue);
+  }
+  const channelControls=createNativeChannels({
+    rpc:nativeRpc,schema:()=>nativeRpc('config.schema',{}),config:()=>nativeRpc('config.get',{}),plugins:readNativePluginCatalogue,
+    authorize:async action=>{
+      if(!channelAuthority?.authorize)throw fail('An owner-authorized channel action is required.','OPENCLAW_CHANNEL_HELD',403);
+      const admission=await channelAuthority.authorize(action);channelAuthority.admission=admission;return admission;
+    },
+    secrets:{targets:nativeSecretTargets,redact:value=>redactNativeControl(value,privateServiceSecrets())},
+    applyConfig:async({patch,secrets,baseHash,channelId})=>{
+      const overlay=await readControlOverlay(directory),schema=await nativeRpc('config.schema',{});
+      const proposed=keySafeOverlay(lastConfiguration,mergeControlOverlay(overlay.patch,patch));
+      return withStagedNativeSecrets(secrets,proposed,schema,()=>controls.updateControls({patch,revision:overlay.revision,baseHash,
+        identity:channelAuthority.identity,authority:channelAuthority.authority,admittedSettings:[`channels.${channelId}`]}));
+    },
+  });
+  async function nativeChannels({identity:nativeIdentity,mode='catalogue',authorize,authority,...input}={}) {
+    if(nativeIdentity?.agentId)controlSessionKey(nativeIdentity);
+    if(!['catalogue','setup','action'].includes(mode))throw fail('Select a native channel operation.','OPENCLAW_CHANNEL_INVALID',400);
+    if(mode!=='catalogue'&&active)throw fail('Wait for the active turn before changing native channels.','OPENCLAW_CONTROL_BUSY',409);
+    await start();channelAuthority={identity:nativeIdentity,authorize,authority};
+    try {return mode==='catalogue'?await channelControls.snapshot():mode==='setup'?await channelControls.save(input):await channelControls.action(input);}
+    finally {channelAuthority=null;}
+  }
   function serializedControl(callback) {
     const epoch = haltEpoch;
     try { assertRunningAllowed(epoch); } catch (error) { return Promise.reject(error); }
@@ -1007,12 +1078,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     const defaults = merged.agents?.defaults;
     const utility = defaults?.utilityModel;
     if (utility && (!nativeModelRef(utility) || retained.some(row => typeof row?.provider === 'string' && row.provider.toLowerCase() === utility.split('/')[0].toLowerCase())))
-      defaults.utilityModel = '';
-    const search = merged.memory?.search;
-    if (search?.enabled) {
-      if (search.provider !== 'local') search.enabled = false;
-      else search.fallback = 'none';
-    }
+      throw nativeKeyRequired();
     return merged;
   }
   async function readNativeKeyStatus(agentId = 'main') {
@@ -1053,17 +1119,20 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
   async function nativeSecrets({identity:nativeIdentity,action='list',...input}={}) {
     if(nativeIdentity?.agentId)controlSessionKey(nativeIdentity);
     const keys=Object.keys(input);
-    if(!['list','set','remove'].includes(action)||keys.some(key=>!(action==='set'?['name','target','value']:action==='remove'?['name']:[]).includes(key)))
+    if(!['list','set','remove'].includes(action)||keys.some(key=>!(action==='set'?['name','target','value','remember']:action==='remove'?['name']:[]).includes(key)))
       throw fail('Select a dedicated native secret action.','OPENCLAW_NATIVE_SECRET_INVALID',400);
     if(action!=='list'&&active)throw fail('Wait for the active turn before changing native credentials.','OPENCLAW_CONTROL_BUSY',409);
     if(typeof input.value==='string'&&input.value.length)nativeCredentialValues.add(input.value);
     await start();
     const config=mergeControlOverlay(lastConfiguration,(await readControlOverlay(directory)).patch);
-    if(action==='list')return nativeSecretStore.list(config);
-    const result=action==='set'?await nativeSecretStore.set(input,config):await nativeSecretStore.remove(input.name,config);
-    for(const row of [...dynamicRows])await row.release();
-    await stopChild();await start();
-    return result;
+    const schema=await nativeRpc('config.schema',{});
+    if(action==='list')return nativeSecretStore.list(config,schema);
+    await withStagedNativeSecrets(action==='set'?[input]:[{name:input.name,remove:true}],config,schema,async()=>{
+      for(const row of [...dynamicRows])await row.release();
+      await stopChild();await start();
+      if((await nativeRpc('config.get',{})).valid!==true)throw fail('The native credential configuration was rejected.','OPENCLAW_CONFIG_REJECTED',422);
+    });
+    return nativeSecretStore.list(config,schema);
   }
   async function configureNativeProvider({identity:nativeIdentity, provider, configuration} = {}) {
     if (nativeIdentity?.agentId) controlSessionKey(nativeIdentity);
@@ -1379,17 +1448,19 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     }
   }
   async function assertEnforcementHealthy({ duringStartup = false } = {}) {
+    let result;const probeStartedAt=Date.now();
     try {
       const owned = child;
       if (!owned || owned.exitCode !== null || owned.signalCode !== null)
         throw fail('No owned context engine is running.', 'OPENCLAW_ENFORCEMENT_UNHEALTHY', 503);
       const client = await nativeConnectionReady({ duringStartup });
-      const result = await client.request('chainchat.enforcementHealth', {});
+      result = await client.request('chainchat.enforcementHealth', {});
       if (owned !== child || owned.exitCode !== null || owned.signalCode !== null ||
           result?.version !== 1 || result.pluginId !== 'cypher-tempre-poi' || result.engineId !== 'cypher-tempre-poi' || result.healthy !== true || result.nativeCompletionPolicy!==true)
         throw fail('The mandatory context engine is not healthy.', 'OPENCLAW_ENFORCEMENT_UNHEALTHY', 503);
       runtimeHealth.ready(childGeneration);
-    } catch {
+    } catch (error) {
+      onDiagnostic?.(nativeEnforcementHealthDiagnostic(error,result,duringStartup,Date.now()-probeStartedAt));
       // Provider-route capabilities alone cannot stop a native deterministic
       // fallback from rewriting its transcript. Validate the actual mandatory
       // factory before entering any chat/compaction lifecycle, and fail-stop
@@ -1665,6 +1736,8 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     nativeSources:request=>serializedControl(()=>nativeSources(request)), setNativeModel: (identity, id) => serializedControl(() => setNativeModel(identity, id)),
     configureNativeProvider: request => serializedControl(() => configureNativeProvider(request)),
     nativeSecrets:request=>serializedControl(()=>nativeSecrets(request)), nativeAuth, compact, close, status, nodePath,
+    nativeChannels:request=>serializedControl(()=>nativeChannels(request)),
+    nativePluginCatalogue:()=>serializedControl(readNativePluginCatalogue),
     automationRpc: services.automationRpc, subscribeAutomation: services.subscribeAutomation,
     registerNativeService: services.registerNativeService,
     configureManagedServices: (patch, options) => serializedControl(() => applyManagedServices(patch, options)),

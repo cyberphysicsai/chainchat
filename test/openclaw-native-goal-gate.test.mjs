@@ -39,7 +39,7 @@ test('a real native gate reviews a resumed own-goal transition using verified go
   }, review: async (_config, args) => {
     reviews.push(args);
     const value = assessment();
-    if (reviewMode === 'low') value.fruitages.love = 179;
+    if (reviewMode === 'low') value.fruitages.love = 149;
     if (reviewMode === 'reject') value.approved = false;
     return value;
   } });
