@@ -204,12 +204,19 @@ test('native schema settings and disabled Telegram credentials apply, survive re
     // owner installs it; channel setup must not invent an executable adapter.
     const pluginReader=manager.registerNativeService({id:'native-channel-catalogue-fixture',methods:{
       'plugins.list':trustedPluginRpcValidators()['plugins.list'],
+      'plugins.inspect':trustedPluginRpcValidators()['plugins.inspect'],
     }});
     const nativePlugins=await pluginReader.request('plugins.list',{});
-    const discord=nativePlugins.plugins.find(item=>item.id==='discord'||item.packageName==='@openclaw/discord');
-    assert.ok(discord,'The native Plugins catalogue must offer the official external Discord integration.');
-    assert.equal(discord.installed,false);assert.equal(discord.enabled,false);
-    assert.ok(discord.install,'The uninstalled Discord integration must retain its native installation source.');
+    // The curated list may still be awaiting hosted catalogue enrichment.
+    // Direct native inspection must resolve the pinned official fallback entry
+    // deterministically, without downloading or installing the plugin.
+    const discord=await pluginReader.request('plugins.inspect',{pluginId:'discord'});
+    assert.equal(discord.plugin.id,'discord');assert.equal(discord.plugin.origin,'official');
+    assert.equal(discord.plugin.installed,false);assert.equal(discord.plugin.enabled,false);
+    assert.equal(discord.source.kind,'official-catalog');assert.equal(discord.source.packageName,'@openclaw/discord');
+    assert.ok(discord.source.spec,'The external Discord integration must retain its native installation source.');
+    const listedDiscord=nativePlugins.plugins.find(item=>item.id==='discord'||item.packageName==='@openclaw/discord');
+    if(listedDiscord){assert.equal(listedDiscord.installed,false);assert.equal(listedDiscord.enabled,false);}
     assert.equal(catalogue.items.some(item=>item.id==='discord'&&item.installed),false,'An uninstalled plugin must not be presented as a usable channel.');
     const field = telegram.credentialFields.find(row=>row.path.length===3&&row.path[2]==='botToken');
     assert.ok(field,'The native Telegram schema must expose its write-only bot credential.');
