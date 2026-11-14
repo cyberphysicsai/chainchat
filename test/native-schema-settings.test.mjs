@@ -97,3 +97,12 @@ test('numeric and dotted map reset paths stay literal while array item deletion 
  const saved=await controls.updateControls({revision:'r1',removePaths:[['channels','discord','accounts','123'],['channels','discord','accounts','work.main','label']]});
  assert.equal(saved.config.editable.channels,undefined);assert.deepEqual(saved.config.editable.ui.tabs,['one','two']);assert.equal(saved.config.nativeProvider,true);
 });
+test('credential list and projection discover schema targets once for all stored bindings',async t=>{
+ const store=await storeFixture(t);let enumerations=0;
+ const envelope={schema:{properties:{channels:{properties:{fixture:{properties:{accounts:{additionalProperties:{properties:{botToken:{type:'string'}}}}}}}}}},uiHints:new Proxy({'channels.fixture.accounts.*.botToken':{sensitive:true}},{ownKeys(target){enumerations++;return Reflect.ownKeys(target);}})};
+ const configuration={channels:{fixture:{accounts:Object.fromEntries(Array.from({length:24},(_,index)=>[`account${index}`,{}]))}}};
+ const changes=Array.from({length:24},(_,index)=>({name:`account${index}`,target:`/channels/fixture/accounts/account${index}/botToken`,value:`synthetic-private-token-${index}`,remember:false}));
+ const transaction=await store.stage(changes,configuration,envelope);await transaction.commit();
+ enumerations=0;const listed=await store.list(configuration,envelope);assert.equal(listed.bindings.length,24);assert.ok(listed.bindings.every(row=>row.available));assert.equal(enumerations,1);
+ enumerations=0;const projected=await store.project(configuration,envelope);assert.equal(Object.keys(projected.environment).length,24);assert.equal(enumerations,1);
+});

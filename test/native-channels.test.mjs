@@ -277,3 +277,49 @@ test('a successful native logout reports retained credential policy without remo
   assert.equal(result.ok, true); assert.equal(result.loggedOut, true); assert.equal(result.cleared, true); assert.equal(result.credentialPolicy, 'retained');
   assert.equal(state.applies.length, 0); assert.equal(state.config.channels.telegram.botToken, 'synthetic-top-secret');
 });
+
+
+test('available catalogue offerings never scan credentials and installed scans contain only their concrete channel subtree', async t => {
+  const scans = [], f = fixture({targets: (config, envelope) => {scans.push({config: structuredClone(config), schema: envelope}); return nativeSecretTargets(config, envelope);}});
+  const telegram = f.state.catalogue.plugins.find(row => row.id === 'telegram-plugin');
+  f.state.catalogue.plugins = [telegram, ...Array.from({length: 29}, (_, index) => ({id: `available-${index}`, name: `Available ${index}`,
+    channelIds: [`available-${index}`], installed: false, enabled: false}))];
+  f.state.status.channelMeta = f.state.status.channelMeta.filter(row => row.id === 'telegram'); delete f.state.status.channelAccounts.discord;
+  f.state.config.unrelated = Object.fromEntries(Array.from({length: 1000}, (_, index) => [`setting${index}`, {value: `sample-${index}`, enabled: true}]));
+  const original = structuredClone(f.state.config);
+  const start = performance.now(), snapshot = await f.api.snapshot(), elapsed = performance.now() - start;
+  assert.equal(snapshot.items.length, 30); assert.equal(scans.length, 1, 'Previously each of the30 discovered rows scanned the entire native configuration.');
+  assert.deepEqual(Object.keys(scans[0].config), ['channels']); assert.deepEqual(Object.keys(scans[0].config.channels), ['telegram']);
+  assert.ok(scans[0].config.channels.telegram.accounts.__chainchat_account_template__);
+  assert.equal(scans[0].schema.uiHints['channels.telegram.opaque'].sensitive, true, 'Original native schema/hints stay available.');
+  assert.deepEqual(f.state.config, original);
+  assert.ok(snapshot.items.filter(row => !row.installed).every(row => row.credentialFields.length === 0));
+  t.diagnostic(`descriptor discovery: former algorithm30 full-config scans; current1 channel-only scan; synthetic1000 unrelated settings snapshot=${elapsed.toFixed(2)}ms (informational only)`);
+});
+
+test('credential setup scans only the selected channel and retains exact dotted account paths', async () => {
+  const scans = [], f = fixture({targets: (config, envelope) => {scans.push(structuredClone(config)); return nativeSecretTargets(config, envelope);}});
+  f.state.config.unrelated = {opaque: 'not-a-channel-setting'};
+  await f.api.save({channelId: 'discord', accountId: 'alice.bot', values: {enabled: false},
+    secretValues: [{name: 'scoped-alice', target: '/channels/discord/accounts/alice.bot/token', value: 'synthetic-scoped-token'}]});
+  assert.equal(scans.length, 7, 'Two installed descriptors during preparation, admission recheck and final snapshot, plus one selected-channel validation scan.');
+  assert.ok(scans.every(config => Object.keys(config).length === 1 && Object.hasOwn(config, 'channels') && Object.keys(config.channels).length === 1));
+  const validation = scans[2]; assert.deepEqual(Object.keys(validation.channels), ['discord']);
+  assert.equal(validation.channels.discord.accounts['alice.bot'].enabled, false);
+  assert.equal(f.state.applies[0].secrets[0].target, '/channels/discord/accounts/alice.bot/token');
+});
+
+
+test('shared native schema inspection preserves inherited sensitivity and ordered wildcard exceptions', async () => {
+  const described = clone(schema);
+  described.schema.properties.channels.properties.telegram.properties.metadata = {type: 'object', properties: {privateValue: {type: 'string'}, publicValue: {type: 'string'}}};
+  described.uiHints['channels.telegram.metadata.*'] = {sensitive: true};
+  described.uiHints['channels.telegram.metadata.publicValue'] = {sensitive: false};
+  const {api, state} = fixture({schema: described});
+  state.config.channels.telegram.metadata = {privateValue: 'concealed-metadata', publicValue: 'visible-metadata'};
+  const telegram = (await api.snapshot()).items.find(row => row.id === 'telegram');
+  assert.deepEqual(telegram.accounts[0].values.metadata, {publicValue: 'visible-metadata'});
+  await assert.rejects(api.save({channelId: 'telegram', accountId: 'default', values: {metadata: {privateValue: 'must-use-secret-field'}}}));
+  await api.save({channelId: 'telegram', accountId: 'default', values: {metadata: {publicValue: 'new-visible-metadata'}}});
+  assert.equal(state.applies.length, 1); assert.equal(state.applies[0].patch.channels.telegram.metadata.publicValue, 'new-visible-metadata');
+});
