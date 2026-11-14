@@ -130,6 +130,7 @@ test('existing uninstalled native offerings receive explicit downstream trust po
     install: {source: 'official', pluginId: 'discord'}}]};
   const result = mergeNativeChannelCatalogue(native, fallback), discord = result.plugins[0];
   assert.equal(discord.requiresExplicitTrust, true); assert.equal(discord.sourceType, 'official'); assert.deepEqual(discord.installSource, fallback.channels[0].installSource);
+  assert.equal(discord.packageName,'@openclaw/discord');assert.equal(native.plugins[0].packageName,undefined);
   for (const key of ['name', 'installed', 'enabled', 'state', 'install']) assert.deepEqual(discord[key], native.plugins[0][key]);
   assert.equal(native.plugins[0].requiresExplicitTrust, false);
   const existingType = mergeNativeChannelCatalogue({plugins: [{id: 'discord', installed: false, enabled: false, sourceType: 'native-provenance'}]}, fallback);
