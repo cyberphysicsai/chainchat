@@ -140,12 +140,33 @@ function variants(schema, root) {
 }
 function schemaSensitive(path, envelope) {
   const root = envelope?.schema || envelope || {};
+  function expand(raw, references = new Set(), objects = new Set()) {
+    if (!object(raw) || objects.has(raw)) return [];
+    const visited = new Set(objects); visited.add(raw);
+    const result = [raw];
+    if (typeof raw.$ref === 'string' && !references.has(raw.$ref)) {
+      const source = localReference(raw.$ref, root), next = new Set(references); next.add(raw.$ref);
+      if (source) result.push(...expand(source, next, visited));
+    }
+    for (const key of ['allOf', 'anyOf', 'oneOf']) if (Array.isArray(raw[key]))
+      for (const branch of raw[key]) result.push(...expand(branch, new Set(references), visited));
+    return result;
+  }
   let nodes = [root];
   for (let index = 0; index <= path.length; index++) {
-    const expanded = nodes.flatMap(raw => { const node = resolveNativeConfigSchema(raw, root); return [node, ...variants(node, root)]; });
-    if (expanded.some(node => node.sensitive === true || node.writeOnly === true)) return true;
+    const expanded = nodes.flatMap(raw => expand(raw));
+    if (expanded.some(node => node.sensitive === true || node.writeOnly === true || node.format === 'password')) return true;
     if (index === path.length) return false;
-    const key = path[index]; nodes = expanded.flatMap(node => own(node.properties, key) ? [node.properties[key]] : /^\d+$/.test(key) && node.items ? [Array.isArray(node.items) ? node.items[Number(key)] : node.items] : object(node.additionalProperties) ? [node.additionalProperties] : []);
+    const key = path[index]; nodes = expanded.flatMap(node => {
+      const children = [];
+      if (own(node.properties, key)) children.push(node.properties[key]);
+      for (const [pattern, child] of Object.entries(node.patternProperties || {})) {
+        try { if (pattern.length <= 1024 && new RegExp(pattern, 'u').test(key)) children.push(child); } catch { /* Match the native inspector: malformed patterns are ignored. */ }
+      }
+      if (/^\d+$/.test(key) && node.items) children.push(Array.isArray(node.items) ? node.items[Number(key)] : node.items);
+      if (!children.length && object(node.additionalProperties)) children.push(node.additionalProperties);
+      return children;
+    });
   }
   return false;
 }

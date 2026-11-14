@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mountNativeConfigForm, nativeConfigFields, nativeConfigValue, parseNativeConfigField, resolveNativeConfigSchema } from '../public/native-config-form.js';
+import { isNativeSensitive } from '../lib/native-config-schema.mjs';
 
 class Node {
   constructor(tag) { this.tagName = tag; this.children = []; this.handlers = {}; this.dataset = {}; this.attributes = {}; this.textContent = ''; this.value = ''; this.checked = false; this.disabled = false; }
@@ -152,4 +153,31 @@ test('native writeOnly and sensitive schema markers are excluded even without se
   assert.throws(() => f.controller.setValue(['preferences', 'innocuousName'], 'value'), /credential/);
   assert.throws(() => f.controller.setValue(['dictionary'], { ordinary: 'value' }), /credential/);
   assert.equal(nativeConfigFields(schema).find(row => row.name === 'preferences.innocuousName').sensitive, true);
+});
+
+test('native password formats and patterned credential maps match backend sensitivity through refs and unions', async () => {
+  const schema = { type: 'object', $defs: { privateText: { type: 'string', format: 'password' }, privateRecord: { type: 'object', properties: { opaque: { $ref: '#/$defs/privateText' } } } }, properties: {
+    ordinary: { type: 'string' }, opaque: { $ref: '#/$defs/privateText' },
+    conditional: { anyOf: [{ $ref: '#/$defs/privateRecord' }, { type: 'object', properties: { opaque: { type: 'string' } } }] },
+    combined: { allOf: [{ type: 'string', writeOnly: true }, { type: 'string', writeOnly: false }] },
+    dictionary: { type: 'object', patternProperties: { '^private[.]': { oneOf: [{ $ref: '#/$defs/privateText' }, { type: 'string' }] }, '.*': { type: 'string' }, '[': { type: 'string', sensitive: true } }, additionalProperties: { type: 'string' } },
+    entries: { type: 'array', items: { $ref: '#/$defs/privateRecord' } },
+  } };
+  const effective = { ordinary: 'public-text', opaque: 'private-format-value', conditional: { opaque: 'private-union-value' }, combined: 'private-allof-value', dictionary: { 'private.entry': 'private-pattern-value', shared: 'public-map-value' }, entries: [{ opaque: 'private-array-value' }] };
+  const f = fixture({ schema, effective });
+  assert.equal(f.nodes().some(node => `${node.textContent} ${node.value}`.includes('private-')), false);
+  assert.ok(f.nodes().some(node => String(node.value).includes('public-map-value')));
+  for (const path of [['opaque'], ['conditional', 'opaque'], ['combined'], ['dictionary', 'private.entry'], ['entries', '0', 'opaque']]) {
+    assert.equal(isNativeSensitive(schema, path), true, `Native fixture is sensitive: ${path.join('.')}`);
+    assert.throws(() => f.controller.setValue(path, 'replacement'), /credential/);
+  }
+  for (const name of ['opaque', 'conditional.opaque', 'combined']) {
+    const field = nativeConfigFields(schema, { effective }).find(row => row.name === name); assert.equal(field.sensitive, true);
+    const row = f.field(name); assert.equal(descendants(row).some(node => node.tagName === 'input' || node.tagName === 'textarea'), false);
+    await descendants(row).find(node => node.textContent === 'Open dedicated control').fire('click');
+  }
+  assert.equal(f.navigation.length, 3);
+  assert.equal(isNativeSensitive(schema, ['ordinary']), false); f.controller.setValue(['ordinary'], 'public-updated');
+  assert.equal(isNativeSensitive(schema, ['dictionary', 'shared']), false); f.controller.setValue(['dictionary', 'shared'], 'public-map-updated');
+  assert.deepEqual(f.controller.getPatch(), { ordinary: 'public-updated', dictionary: { shared: 'public-map-updated' } });
 });
