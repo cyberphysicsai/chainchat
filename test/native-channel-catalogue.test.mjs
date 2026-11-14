@@ -122,3 +122,16 @@ test('ambiguous installed IDs never inherit official installation provenance or 
   const externalAmbiguous = mergeNativeChannelCatalogue({plugins: [{id: 'future-plugin', installed: true, enabled: true, install: {source: 'official', pluginId: 'future-plugin'}}]}, fallback);
   assert.equal(externalAmbiguous.plugins[0].installSource, undefined); assert.equal(externalAmbiguous.plugins[0].sourceType, undefined);
 });
+
+
+test('existing uninstalled native offerings receive explicit downstream trust policy without runtime fact changes', async t => {
+  const f = await fixture(t), fallback = await loadOfficialChannelCatalogue(f.root);
+  const native = {plugins: [{id: 'discord', name: 'Native available Discord', installed: false, enabled: false, state: 'not-installed', requiresExplicitTrust: false,
+    install: {source: 'official', pluginId: 'discord'}}]};
+  const result = mergeNativeChannelCatalogue(native, fallback), discord = result.plugins[0];
+  assert.equal(discord.requiresExplicitTrust, true); assert.equal(discord.sourceType, 'official'); assert.deepEqual(discord.installSource, fallback.channels[0].installSource);
+  for (const key of ['name', 'installed', 'enabled', 'state', 'install']) assert.deepEqual(discord[key], native.plugins[0][key]);
+  assert.equal(native.plugins[0].requiresExplicitTrust, false);
+  const existingType = mergeNativeChannelCatalogue({plugins: [{id: 'discord', installed: false, enabled: false, sourceType: 'native-provenance'}]}, fallback);
+  assert.equal(existingType.plugins[0].sourceType, 'native-provenance'); assert.equal(existingType.plugins[0].requiresExplicitTrust, true);
+});

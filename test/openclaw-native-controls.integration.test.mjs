@@ -10,7 +10,6 @@ import { createOpenClawGateway } from '../openclaw/gateway.mjs';
 import { createPoIBroker } from '../openclaw/broker.mjs';
 import { engine } from '../lib/engine.mjs';
 import { FRUITS, DIMENSIONS } from '../lib/providers.mjs';
-import {trustedPluginRpcValidators} from '../lib/trusted-plugin-manager.mjs';
 
 const packageRoot = process.env.CT_OPENCLAW_PACKAGE, nodePath = process.env.CT_OPENCLAW_NODE;
 test('real native goals, settings, scoped tools and durable app restarts retain enforcement and key isolation', {
@@ -206,21 +205,16 @@ test('native schema settings and disabled Telegram credentials apply, survive re
     // In 2026.11.3 Discord is an official external plugin, not a bundled
     // installed channel. It belongs in the native Plugins catalogue until the
     // owner installs it; channel setup must not invent an executable adapter.
-    const pluginReader=manager.registerNativeService({id:'native-channel-catalogue-fixture',methods:{
-      'plugins.list':trustedPluginRpcValidators()['plugins.list'],
-      'plugins.inspect':trustedPluginRpcValidators()['plugins.inspect'],
-    }});
-    const nativePlugins=await pluginReader.request('plugins.list',{});
-    // The curated list may still be awaiting hosted catalogue enrichment.
-    // Direct native inspection must resolve the pinned official fallback entry
-    // deterministically, without downloading or installing the plugin.
-    const discord=await pluginReader.request('plugins.inspect',{pluginId:'discord'});
-    assert.equal(discord.plugin.id,'discord');assert.equal(discord.plugin.origin,'official');
-    assert.equal(discord.plugin.installed,false);assert.equal(discord.plugin.enabled,false);
-    assert.equal(discord.source.kind,'official-catalog');assert.equal(discord.source.packageName,'@openclaw/discord');
-    assert.ok(discord.source.spec,'The external Discord integration must retain its native installation source.');
-    const listedDiscord=nativePlugins.plugins.find(item=>item.id==='discord'||item.packageName==='@openclaw/discord');
-    if(listedDiscord){assert.equal(listedDiscord.installed,false);assert.equal(listedDiscord.enabled,false);}
+    // Exercise the same native-plus-pinned catalogue facade used by the public
+    // Plugins menu. Discovery still requires the owned Gateway's health check;
+    // metadata grants neither installation trust nor execution authority.
+    const nativePlugins=await manager.nativePluginCatalogue();
+    const discord=nativePlugins.plugins.find(item=>item.id==='discord'&&item.packageName==='@openclaw/discord');
+    assert.ok(discord,'The actual Plugins facade must offer the external Discord integration.');
+    assert.equal(discord.installed,false);assert.equal(discord.enabled,false);
+    assert.ok(discord.channelIds.includes('discord'));assert.equal(discord.requiresExplicitTrust,true);
+    assert.equal(discord.installSource.source,'npm');assert.equal(discord.installSource.expectedPluginId,'discord');
+    assert.match(discord.installSource.spec,/^@openclaw\/discord@/u);
     assert.equal(catalogue.items.some(item=>item.id==='discord'&&item.installed),false,'An uninstalled plugin must not be presented as a usable channel.');
     const field = telegram.credentialFields.find(row=>row.path.length===3&&row.path[2]==='botToken');
     assert.ok(field,'The native Telegram schema must expose its write-only bot credential.');

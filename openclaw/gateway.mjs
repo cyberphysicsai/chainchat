@@ -60,6 +60,19 @@ export function nativeLifecycleDiagnostic(event, generation, code, signal) {
   const safeSignal = signal === null ? 'none' : ['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGHUP', 'SIGABRT', 'SIGSEGV', 'SIGBUS', 'SIGILL'].includes(signal) ? signal : 'UNKNOWN';
   return `[chainchat] native lifecycle event=${safeEvent} generation=${safeGeneration} code=${safeCode} signal=${safeSignal}\n`;
 }
+export function nativeEnforcementHealthDiagnostic(error, result, duringStartup=false, elapsedMs) {
+  const contextReasons=new Set(['FACTORY_FAILED','BOOTSTRAP_FAILED','INGEST_FAILED','ASSEMBLE_FAILED','COMPACT_FAILED','COMMIT_TURN_FAILED']);
+  const transportCodes=new Set(['OPENCLAW_CONTROL_TIMEOUT','OPENCLAW_CONTROL_CLOSED','OPENCLAW_CONTROL_AUTH','TIMEOUT','REQUEST_TIMEOUT']);
+  let reason='PROBE_FAILED';
+  if(contextReasons.has(result?.reasonCode))reason=result.reasonCode;
+  else if(result?.nativeCompletionPolicy===false)reason='POLICY_MISMATCH';
+  else if(result&&(result.healthy!==true||result.version!==1||result.pluginId!=='cypher-tempre-poi'||result.engineId!=='cypher-tempre-poi'))reason='INVALID_HEALTH_RESULT';
+  else if(transportCodes.has(error?.code))reason=error.code;
+  else if(['GatewayClientRequestTimeoutError','GatewayProtocolRequestTimeoutError'].includes(error?.name))reason='PROBE_TIMEOUT';
+  else if(typeof error?.message==='string'&&/\b(?:request timeout|timed out|timeout waiting)\b/iu.test(error.message.slice(0,1024)))reason='PROBE_TIMEOUT';
+  const elapsed=Number.isSafeInteger(elapsedMs)&&elapsedMs>=0&&elapsedMs<=86400000?` elapsedMs=${elapsedMs}`:'';
+  return `[chainchat] mandatory health phase=${duringStartup?'startup':'runtime'} reason=${reason}${elapsed}\n`;
+}
 export async function readNativeReviewedCandidate(broker, claimId, generatedText) {
   try { return await broker.readCandidate({claimId}); }
   catch (error) {
@@ -1435,17 +1448,19 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     }
   }
   async function assertEnforcementHealthy({ duringStartup = false } = {}) {
+    let result;const probeStartedAt=Date.now();
     try {
       const owned = child;
       if (!owned || owned.exitCode !== null || owned.signalCode !== null)
         throw fail('No owned context engine is running.', 'OPENCLAW_ENFORCEMENT_UNHEALTHY', 503);
       const client = await nativeConnectionReady({ duringStartup });
-      const result = await client.request('chainchat.enforcementHealth', {});
+      result = await client.request('chainchat.enforcementHealth', {});
       if (owned !== child || owned.exitCode !== null || owned.signalCode !== null ||
           result?.version !== 1 || result.pluginId !== 'cypher-tempre-poi' || result.engineId !== 'cypher-tempre-poi' || result.healthy !== true || result.nativeCompletionPolicy!==true)
         throw fail('The mandatory context engine is not healthy.', 'OPENCLAW_ENFORCEMENT_UNHEALTHY', 503);
       runtimeHealth.ready(childGeneration);
-    } catch {
+    } catch (error) {
+      onDiagnostic?.(nativeEnforcementHealthDiagnostic(error,result,duringStartup,Date.now()-probeStartedAt));
       // Provider-route capabilities alone cannot stop a native deterministic
       // fallback from rewriting its transcript. Validate the actual mandatory
       // factory before entering any chat/compaction lifecycle, and fail-stop
