@@ -99,7 +99,7 @@ test('actual native SDK uses configured main model and native auth, with zero to
     assert.ok(calls.every(call => call.authorization === 'Bearer synthetic-native-sdk-key'));
     assert.deepEqual((await engine({ op: 'inspect', root, learning: false })).head, initial.head);
     const controls=await manager.describeControls(identity);
-    await manager.updateControls({revision:controls.config.revision,patch:{agents:{defaults:{utilityModel:'fixture-native/fixture'}}}});
+    await manager.updateControls({revision:controls.config.revision,baseHash:controls.config.baseHash,patch:{agents:{defaults:{utilityModel:'fixture-native/fixture'}}}});
     const optedIn=JSON.parse(await fs.readFile(path.join(directory,'gateway','gateway.json'),'utf8'));
     assert.equal(optedIn.agents.defaults.utilityModel,'fixture-native/fixture','Only an explicit owner settings change enables native utility inference.');
     assert.equal(JSON.stringify(optedIn).includes('synthetic-native-sdk-key'),false);

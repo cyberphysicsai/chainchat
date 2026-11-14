@@ -35,7 +35,7 @@ function localHints(hints, path) {
 
 /** A pure owner-facing renderer: all native effects go through explicit injected
  * facade callbacks. It never connects to the Gateway or handles its RPC token. */
-export function mountNativeChannelSetup({ document: doc, mount, onSave = async () => {}, onAction = async () => {}, onRefresh = async () => {}, onSaved = async () => {}, onError = () => {}, context = () => '', ...initial }) {
+export function mountNativeChannelSetup({ document: doc, mount, onSave = async () => {}, onAction = async () => {}, onRefresh = async () => {}, onSaved = async () => {}, onInstall, onError = () => {}, context = () => '', ...initial }) {
   if (!doc?.createElement || !mount?.append) throw new Error('A native channel setup mount is required.');
   const make = (tag, label = '', className = '') => { const node = doc.createElement(tag); node.textContent = label; if (className) node.className = className; return node; };
   const card = make('section', '', 'native-channel-setup'), toolbar = make('div', '', 'native-channel-toolbar');
@@ -50,7 +50,7 @@ export function mountNativeChannelSetup({ document: doc, mount, onSave = async (
   const actions = make('div', '', 'native-channel-actions'), pairing = make('div', '', 'native-channel-pairing'), login = make('div');
   const message = make('p', '', 'fine-print'); message.setAttribute('role', 'status');
   card.append(make('h3', 'Native channels & integrations'), toolbar, status, setup, secrets, save, actions, pairing, login, message); mount.append(card);
-  let state = { items: [] }, destroyed = false, busy = false, generation = 0, form, passwords = [], actionButtons = [], challenge, accountBaseHash, staleSnapshot = false, reloadNext = false;
+  let state = { items: [] }, destroyed = false, busy = false, generation = 0, form, passwords = [], actionButtons = [], installButton, challenge, accountBaseHash, staleSnapshot = false, reloadNext = false;
   const selected = () => (state.items || []).find(item => item.id === channel.value);
   const accountId = () => account.value === '__new__' ? newAccount.value.trim() : account.value;
   function validAccount() {
@@ -63,6 +63,7 @@ export function mountNativeChannelSetup({ document: doc, mount, onSave = async (
     const disabled = busy || !!state.disabled || !selected();
     channel.disabled = account.disabled = newAccount.disabled = refresh.disabled = busy || !!state.disabled;
     save.disabled = disabled || staleSnapshot || selected()?.installed === false;
+    if (installButton) installButton.disabled = disabled;
     for (const button of actionButtons) button.disabled = disabled;
     for (const row of passwords) { row.input.disabled = disabled; row.remember.disabled = disabled; row.multiline.disabled = disabled; row.multilineInput.disabled = disabled; }
     form?.update({ disabled });
@@ -113,12 +114,26 @@ export function mountNativeChannelSetup({ document: doc, mount, onSave = async (
     message.textContent = result?.connected ? 'The native runtime reports that this account is connected.' : text(result?.message) || 'Complete the native login, then check its status.';
   }
   function drawStatus(item, chosen) {
-    status.replaceChildren();
+    status.replaceChildren(); installButton = undefined;
     if (!item) { status.append(make('p', 'Connect the local runtime to discover its installed and available integrations.')); return; }
     status.append(make('strong', text(item.label) || item.id));
     if (item.description) status.append(make('p', text(item.description)));
     status.append(make('p', `Plugin: ${item.installed === false ? 'not installed' : 'installed'} · Enabled: ${item.enabled ? 'yes' : 'no'} · Configured: ${chosen?.configured || item.configured ? 'yes' : 'no'} · Running: ${chosen?.running ? 'yes' : 'no'} · Connected: ${chosen?.connected ? 'yes' : 'no'}`));
-    if (item.installed === false) status.append(make('p', 'Install and explicitly trust this integration in the native plugin controls, then refresh its configuration schema.'));
+    if (item.installed === false) {
+      status.append(make('p', 'Install and explicitly trust this integration in the native plugin controls, then refresh its configuration schema.'));
+      if (typeof onInstall === 'function') {
+        installButton = make('button', 'Review integration plugin', 'secondary-button'); installButton.type = 'button';
+        installButton.addEventListener('click', () => run(async isCurrent => {
+          // Only discovery metadata crosses into the native plugin review form.
+          // Configuration, credential fields and account values stay here.
+          const details = { id: text(item.id, 128), label: text(item.label, 256), ...(text(item.pluginId, 256) ? { pluginId: text(item.pluginId, 256) } : {}),
+            ...(object(item.install) ? { install: nativeConfigValue(item.install) } : {}), ...(object(item.installSource) ? { installSource: nativeConfigValue(item.installSource) } : {}),
+            ...(['official', 'external'].includes(item.sourceType) ? { sourceType: item.sourceType } : {}), ...(typeof item.requiresExplicitTrust === 'boolean' ? { requiresExplicitTrust: item.requiresExplicitTrust } : {}) };
+          await onInstall(details);
+          if (isCurrent()) message.textContent = 'Review the native plugin source and exact artifact before explicitly trusting or installing it.';
+        })); status.append(installButton);
+      }
+    }
     if (chosen?.lastError) status.append(make('p', text(chosen.lastError)));
   }
   function drawAccount() {

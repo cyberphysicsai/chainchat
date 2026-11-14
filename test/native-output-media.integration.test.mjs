@@ -100,7 +100,7 @@ test('actual admitted native TTS output is copied into owned assets and reviewed
     phase = 'models';
     await manager.setNativeModel(identity, 'openai/fixture');
     const controls = await manager.describeControls(identity);
-    phase = 'settings'; await manager.updateControls({ revision: controls.config.revision, patch: { tts: { auto: 'off', provider: 'openai', persona: 'fixture',
+    phase = 'settings'; await manager.updateControls({ revision: controls.config.revision, baseHash: controls.config.baseHash, patch: { tts: { auto: 'off', provider: 'openai', persona: 'fixture',
       personas: { fixture: { provider: 'openai', fallbackPolicy: 'fail', providers: { openai: { baseUrl, model: 'tts-1', speakerVoice: 'alloy', responseFormat: 'wav' } } } } } } });
     await manager.nativeSecrets({ identity, action: 'set', name: 'speech', target: 'tts.providers.openai.apiKey', value: 'sk-synthetic-native-output-key' });
     assert.equal(JSON.stringify(await manager.nativeSecrets({ identity, action: 'list' })).includes('sk-synthetic-native-output-key'), false);

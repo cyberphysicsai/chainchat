@@ -23,6 +23,7 @@ import {validateNativeAttachments} from '../lib/native-attachments.mjs';
 import {parseNativeMediaCompletion} from '../lib/native-media-completion.mjs';
 import {NativeSecrets,nativeSecretTargets} from '../lib/native-secrets.mjs';
 import {createNativeChannels} from '../lib/native-channels.mjs';
+import {loadOfficialChannelCatalogue,mergeNativeChannelCatalogue} from '../lib/native-channel-catalogue.mjs';
 import {createNativeHeartbeatScratch,readNativeHeartbeatMonitor} from '../lib/native-heartbeat-scratch.mjs';
 import {waitForNativeSessionIdle} from '../lib/native-session-idle.mjs';
 import {assertManagedRuntime} from './runtime-security.mjs';
@@ -887,8 +888,14 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       throw error;
     }
   }
+  let officialChannelCatalogue;
+  async function readNativePluginCatalogue() {
+    const native=await nativeRpc('plugins.list',{});
+    officialChannelCatalogue??=loadOfficialChannelCatalogue(upstream);
+    return mergeNativeChannelCatalogue(native,await officialChannelCatalogue);
+  }
   const channelControls=createNativeChannels({
-    rpc:nativeRpc,schema:()=>nativeRpc('config.schema',{}),config:()=>nativeRpc('config.get',{}),plugins:()=>nativeRpc('plugins.list',{}),
+    rpc:nativeRpc,schema:()=>nativeRpc('config.schema',{}),config:()=>nativeRpc('config.get',{}),plugins:readNativePluginCatalogue,
     authorize:async action=>{
       if(!channelAuthority?.authorize)throw fail('An owner-authorized channel action is required.','OPENCLAW_CHANNEL_HELD',403);
       const admission=await channelAuthority.authorize(action);channelAuthority.admission=admission;return admission;
@@ -1715,6 +1722,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     configureNativeProvider: request => serializedControl(() => configureNativeProvider(request)),
     nativeSecrets:request=>serializedControl(()=>nativeSecrets(request)), nativeAuth, compact, close, status, nodePath,
     nativeChannels:request=>serializedControl(()=>nativeChannels(request)),
+    nativePluginCatalogue:()=>serializedControl(readNativePluginCatalogue),
     automationRpc: services.automationRpc, subscribeAutomation: services.subscribeAutomation,
     registerNativeService: services.registerNativeService,
     configureManagedServices: (patch, options) => serializedControl(() => applyManagedServices(patch, options)),

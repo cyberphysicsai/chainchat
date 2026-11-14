@@ -513,6 +513,7 @@ export function initOpenClawSettings({ api, requireConnection, executeCommand, i
     onNavigate:()=>section('tools')}) : null;
   const channelSetup=$('nativeChannelSetupMount') ? mountNativeChannelSetup({document:doc,mount:$('nativeChannelSetupMount'),
     context:()=>connectionRevision,onError:failure=>error(failure?.message || String(failure)),
+    onInstall:details=>reviewChannelPlugin(details),
     onRefresh:()=>api('/api/openclaw/channels'),
     onSave:payload=>api('/api/openclaw/channels/setup',payload),
     onAction:payload=>api('/api/openclaw/channels/action',payload),onSaved:()=>refresh()}) : null;
@@ -875,8 +876,8 @@ export function initOpenClawSettings({ api, requireConnection, executeCommand, i
   const pluginCatalogue = element('pre'); pluginCatalogue.id = 'nativePluginCatalogue'; pluginCard.append(pluginCatalogue);
   const pluginForm = element('form'), operation = element('select'); operation.id = 'nativePluginOperation';
   for (const value of ['install', 'enable', 'update', 'disable', 'uninstall', 'reload', 'configure']) { const option = element('option', value); option.value = value; operation.append(option); }
-  const pluginId = element('input'); pluginId.type = 'text'; pluginId.placeholder = 'Plugin ID for installed operations'; pluginId.autocomplete = 'off';
-  const source = element('textarea'); source.rows = 5; source.spellcheck = false; source.value = '{"source":"npm","spec":"package-name@1.0.0","pin":true}';
+  const pluginId = element('input'); pluginId.id='nativePluginId';pluginId.type = 'text'; pluginId.placeholder = 'Plugin ID for installed operations'; pluginId.autocomplete = 'off';
+  const source = element('textarea'); source.id='nativePluginSource';source.rows = 5; source.spellcheck = false; source.value = '{"source":"npm","spec":"package-name@1.0.0","pin":true}';
   const configuration = element('textarea'); configuration.rows = 4; configuration.spellcheck = false; configuration.value = '{}';
   pluginForm.append(element('label', 'Operation'), operation, element('label', 'Installed plugin ID (leave empty for an install)'), pluginId,
     element('label', 'Native source JSON · npm, ClawHub or a local plugin folder'), source, element('label', 'Nonsecret plugin settings for configure'), configuration);
@@ -888,6 +889,15 @@ export function initOpenClawSettings({ api, requireConnection, executeCommand, i
   consentLabel.append(consentCheckbox, element('span', 'I reviewed and acknowledge the displayed native policy or capability notice for this exact operation.'));
   consentLabel.classList.add('hidden'); noticeText.classList.add('hidden');
   let pluginPreview = null, pluginNotices = {};
+  function reviewChannelPlugin(details) {
+    const selection=details?.installSource;
+    if(!selection||typeof selection!=='object'||Array.isArray(selection)){error('Inspect this integration in the native plugin catalogue and choose its installation source.');section('plugins');return;}
+    operation.value='install';pluginId.value='';source.value=pretty(selection);configuration.value='{}';
+    pluginPreview=null;pluginNotices={};trustCheckbox.checked=consentCheckbox.checked=false;applyPlugin.disabled=true;
+    previewText.textContent='Review the exact artifact below. Selecting an integration does not install or trust it.';
+    noticeText.textContent='';noticeText.classList.add('hidden');consentLabel.classList.add('hidden');
+    section('plugins');previewButton.focus?.({preventScroll:true});pluginCard.scrollIntoView?.({behavior:'smooth',block:'start'});
+  }
   const showPreview = value => { pluginPreview = value; pluginNotices = {}; consentCheckbox.checked = false; consentLabel.classList.add('hidden'); noticeText.classList.add('hidden'); previewText.textContent = pretty(value); trustCheckbox.checked = false; applyPlugin.disabled = !['disable', 'uninstall'].includes(value?.operation); };
   trustCheckbox.addEventListener('change', () => { applyPlugin.disabled = !pluginPreview || (!trustCheckbox.checked && !['disable', 'uninstall'].includes(pluginPreview.operation)); });
   pluginForm.addEventListener('submit', async event => {

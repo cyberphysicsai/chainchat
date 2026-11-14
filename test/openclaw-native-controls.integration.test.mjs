@@ -199,6 +199,10 @@ test('native schema settings and disabled Telegram credentials apply, survive re
     const catalogue = await manager.nativeChannels({mode:'catalogue',identity});
     const telegram = catalogue.items.find(item=>item.id==='telegram');
     assert.ok(telegram?.installed,'The pinned native Telegram channel must be discovered dynamically.');
+    const availableDiscord=catalogue.items.find(item=>item.id==='discord');
+    assert.ok(availableDiscord&&!availableDiscord.installed,'The pinned external catalogue must make Discord discoverable before installation.');
+    assert.equal(availableDiscord.installSource.source,'npm');
+    assert.match(availableDiscord.installSource.spec,/^@openclaw\/discord@/u);
     // In 2026.11.3 Discord is an official external plugin, not a bundled
     // installed channel. It belongs in the native Plugins catalogue until the
     // owner installs it; channel setup must not invent an executable adapter.

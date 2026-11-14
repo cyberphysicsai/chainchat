@@ -69,6 +69,16 @@ test('root settings mount maps the native schema envelope/effective values to ac
   assert.ok(f.doc.querySelectorAll('strong').some(node => node.textContent === 'Retries from the exact native schema'));
 });
 
+test('available channel plugin selection prefills the real artifact-review form without installing or trusting code',async()=>{
+  const installSource={source:'npm',spec:'@openclaw/discord@2026.11.3',pin:true,expectedPluginId:'discord'};
+  const f=fixture({channels:{items:[{id:'discord',label:'Discord',pluginId:'discord',installed:false,enabled:false,installSource,accounts:[],schema:{},capabilities:{}}]}});
+  await settle();const button=f.doc.querySelectorAll('button').find(node=>node.textContent==='Review integration plugin');
+  assert.ok(button);await button.fire('click');
+  assert.equal(f.get('nativePluginOperation').value,'install');assert.equal(f.get('nativePluginId').value,'');
+  assert.deepEqual(JSON.parse(f.get('nativePluginSource').value),installSource);
+  assert.equal(f.calls.some(([route])=>route.startsWith('/api/openclaw/plugins/')),false);
+});
+
 test('exact owner grants, mandatory immutables and host browser permissions match backend acceptance for compatible leaves', () => {
   const guards = { channels: 'Channel admission.', browser: 'Browser admission.', 'agents.defaults.compaction': 'Compaction admission.', gateway: 'Private transport.' };
   const config = { guards, immutablePaths: ['gateway', 'agents.defaults.model'] }, nativeCapabilities = { enabled: true, acknowledged: true, settings: ['channels.telegram', 'agents.defaults.compaction'] };

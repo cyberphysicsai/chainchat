@@ -119,3 +119,15 @@ test('changed native configuration blocks a preserved channel draft until an exp
   await f.button('Refresh native integrations').fire('click'); assert.equal(f.button('Save native channel configuration').disabled, false);
   await f.button('Save native channel configuration').fire('click'); assert.equal(f.saves[0].baseHash, 'new-native-config'); assert.deepEqual(f.saves[0].values, {});
 });
+
+test('uninstalled integrations offer explicit plugin review with safe cloned install metadata and no automatic native effect', async () => {
+  const reviewed = [], install = { source: 'official', pluginId: 'discovered-chat' }, installSource = { source: 'npm', spec: '@openclaw/discovered-chat@2026.11.3', pin: true, expectedPluginId: 'discovered-chat' };
+  const f = fixture({ items: [channel({ installed: false, install, installSource, sourceType: 'official', requiresExplicitTrust: true, accounts: [{ accountId: 'default', values: { sensitiveInternal: 'excluded-account-fixture' } }] })], onInstall: item => reviewed.push(item) });
+  assert.equal(reviewed.length, 0); assert.equal(f.actions.length, 0); assert.equal(f.saves.length, 0);
+  await f.button('Review integration plugin').fire('click');
+  assert.deepEqual(reviewed, [{ id: 'discovered-chat', label: '<script>native integration</script>', pluginId: 'native.plugin', install, installSource, sourceType: 'official', requiresExplicitTrust: true }]);
+  assert.notEqual(reviewed[0].install, install); assert.notEqual(reviewed[0].installSource, installSource); assert.equal(Object.hasOwn(reviewed[0], 'accounts'), false); assert.equal(Object.hasOwn(reviewed[0], 'credentialFields'), false);
+  assert.equal(f.actions.length, 0); assert.equal(f.saves.length, 0); assert.equal(f.button('Save native channel configuration').disabled, true);
+  f.controller.render({ items: [channel({ installed: true })] }); assert.equal(f.button('Review integration plugin'), undefined);
+  f.controller.render({ items: [channel({ installed: false })], disabled: true }); assert.equal(f.button('Review integration plugin').disabled, true);
+});

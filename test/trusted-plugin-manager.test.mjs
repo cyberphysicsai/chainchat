@@ -30,6 +30,7 @@ async function fixture(t, options = {}) {
     throw new Error(`Unexpected native method ${method}`);
   };
   const factory = () => createTrustedPluginManager({ directory: state, rpc,
+    catalogueView:options.catalogueView,
     authorizeAction: async (_context, action) => { permits.push(action); return { allowed: options.deny !== true, permitId: options.replay ? 'replayed-permit' : `owner-permit-${++number}`, actionHash: action.actionHash }; },
     configureManagedServices: async (_context, patch, options) => { configurations.push(structuredClone(patch)); if (options) configurations.at(-1).forceReload = options.forceReload; for (const [id, entry] of Object.entries(patch.plugins?.entries || {})) if (plugins.has(id) && entry.enabled !== undefined) plugins.get(id).enabled = entry.enabled; return { ok: true }; },
     effectiveToolCatalogue: async () => [{ id: 'exec', source: 'core' }, { id: 'fixture_touch', source: 'plugin', pluginId: 'ct-trusted-fixture', description: 'Fixture tool', parameters: { type: 'object' } },
@@ -41,6 +42,13 @@ async function fixture(t, options = {}) {
   return { manager: await factory(), factory, source, state, calls, permits, configurations, plugins };
 }
 const trust = view => ({ acknowledged: true, pluginId: view.artifact.pluginId, version: view.artifact.version, integrity: view.artifact.integrity, trustDigest: view.trustDigest });
+test('catalogue enrichment is display-only and cannot grant native channel authority',async t=>{
+  const available={plugins:[{id:'discord',channelIds:['discord'],installed:false,enabled:false,requiresExplicitTrust:true}]};
+  const f=await fixture(t,{catalogueView:async()=>available});
+  assert.deepEqual(await f.manager.catalogue(),available);
+  assert.equal(await f.manager.channelAllowed('discord','discord'),false);
+  assert.deepEqual(await f.manager.toolCatalogue({}),[]);assert.equal(f.permits.length,0);assert.equal(f.configurations.length,0);
+});
 async function staged(f) {
   const view = await f.manager.preview({}, { operation: 'install', source: { source: 'local', path: f.source } });
   return f.manager.install({}, { previewId: view.previewId, trust: trust(view) });

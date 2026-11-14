@@ -1921,6 +1921,7 @@ export async function createApp(options = {}) {
     const pins = JSON.parse(await fs.readFile(path.join(appRoot, 'openclaw/upstream-lock.json'), 'utf8'));
     trustedPlugins = await createTrustedPluginManager({ directory: path.join(store.root, 'trusted-native-plugins'),
       packageRoot: options.openclaw.packageRoot, upstreamIntegrity: pins.openclaw.integrity,
+      catalogueView:openclaw.nativePluginCatalogue?()=>openclaw.nativePluginCatalogue():undefined,
       mandatoryPluginIds: ['cypher-tempre-poi', 'browser'], contextEngineId: 'cypher-tempre-poi',
       mandatoryLoadPaths: [options.openclaw.pluginPath || path.join(appRoot, 'openclaw/plugin')],
       rpc: (method, params) => pluginTransport.request(method, params),
@@ -2531,7 +2532,6 @@ export async function createApp(options = {}) {
             const identity=await nativeControlIdentity(session,true),record=agentFor(session);
             if(busy.size||session.controllers.size)throw err('Wait for active agent work before changing native channels.','AGENT_BUSY',409);
             const setup=url.pathname.endsWith('/setup');
-            for(const change of input.secretValues || [])if(typeof change?.value==='string'&&change.value)serviceSecrets.add(change.value);
             const authorize=async action=>{
               await checkSkillOwner(session,identity);
               const permit=await authorizeServiceAction({record},action);
@@ -2544,6 +2544,8 @@ export async function createApp(options = {}) {
             };
             if(Object.keys(input).some(key=>!(setup?['channelId','accountId','values','secretValues','baseHash']:['action','channelId','accountId','requestId','notify','bootstrapCommandOwner','force','timeoutMs','challengeId']).includes(key)))
               throw err('Use the exact native channel setup or lifecycle fields.');
+            if(input.secretValues!==undefined&&!Array.isArray(input.secretValues))throw err('Use the dedicated native credential fields.');
+            for(const change of input.secretValues || [])if(typeof change?.value==='string'&&change.value)serviceSecrets.add(change.value);
             const result=await exclusive(record,()=>openclaw.nativeChannels({...input,identity,mode:setup?'setup':'action',
               authorize,authority:toolPermissions.get(authorityKey(identity)).grant}));
             await requireLocalAccess();assertServiceIsolation(result);return send(200,result);
