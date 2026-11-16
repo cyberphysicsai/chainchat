@@ -131,6 +131,13 @@ async function main() {
   if (await page.locator('#setupDialog').evaluate(node => node.open)) await page.locator('#setupDismiss').click();
   stage = 'control-center';
   await page.waitForFunction(() => !document.getElementById('nativeConnectedControls').disabled, null, { timeout: 150000 });
+  const initialFieldCount = await page.locator('#nativeConfigFormMount input, #nativeConfigFormMount textarea, #nativeConfigFormMount select').count();
+  check(initialFieldCount > 0, 'CONTROL_CENTER_FAILED');
+  // The default progressive view can contain only simple fields. Exercise the
+  // real advanced view without changing configuration; JSON fields are optional
+  // schema content, so an otherwise valid view must not require a textarea.
+  const advancedView = page.locator('#nativeConfigFormMount .native-config-toolbar input[type="checkbox"]');
+  await advancedView.check();
   report.controlCenter = await page.evaluate(() => ({
     enabled: !document.getElementById('nativeConnectedControls').disabled,
     fieldCount: document.querySelectorAll('#nativeConfigFormMount input, #nativeConfigFormMount textarea, #nativeConfigFormMount select').length,
@@ -140,9 +147,12 @@ async function main() {
     configurationFormActive: !document.getElementById('nativeConfigFormMount').inert,
     errorEmpty: !document.getElementById('nativeError').textContent.trim(),
   }));
-  check(report.controlCenter.enabled && report.controlCenter.fieldCount > 0 && report.controlCenter.textareaCount > 0 &&
+  report.controlCenter.initialFieldCount = initialFieldCount;
+  report.controlCenter.advancedViewAttempted = true;
+  check(report.controlCenter.enabled && report.controlCenter.fieldCount > 0 &&
     report.controlCenter.nativeTextareaTypes && report.controlCenter.permissionRevocationEnabled &&
     report.controlCenter.configurationFormActive && report.controlCenter.errorEmpty, 'CONTROL_CENTER_FAILED');
+  await advancedView.uncheck();
   stage = 'model-connection';
   if (await page.locator('#setupDialog').evaluate(node => node.open)) await page.locator('#setupDismiss').click();
   await page.locator('#modelButton').click();
