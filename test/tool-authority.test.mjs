@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { validateToolAuthority, authorizeToolCall, isPublicAddress } from '../lib/tool-authority.mjs';
+import { validateToolAuthority, authorizeToolCall, isPublicAddress, toolAuthorityFingerprint } from '../lib/tool-authority.mjs';
 import { createPoIBroker } from '../openclaw/broker.mjs';
 import { FRUITS, DIMENSIONS } from '../lib/providers.mjs';
 
@@ -88,6 +88,25 @@ test('network calls require an exact public HTTPS hostname and independently ver
   assert.equal(isPublicAddress('8.8.8.8'), true); assert.equal(isPublicAddress('2606:4700:4700::1111'), true);
 });
 
+test('new Browser grants need destinations while legacy invocation admission narrows only the unavailable tool', async () => {
+  const grant = { enabled: true, acknowledged: true, tools: ['browser'], roots: [], networkHosts: [], allowExecution: false };
+  const original = structuredClone(grant), fingerprint = toolAuthorityFingerprint(grant);
+  await assert.rejects(validateToolAuthority(grant, { managedBrowser: true, requireBrowserHosts: true }),
+    error => error.code === 'BROWSER_HOSTS_REQUIRED' && error.status === 403 && /deselect Browser/.test(error.message));
+  assert.deepEqual((await validateToolAuthority(grant, { managedBrowser: true })).tools, ['browser'], 'Legacy reads retain the original grant.');
+  const effective = await validateToolAuthority(grant, { omitUnconfiguredBrowser: true });
+  assert.deepEqual(effective, { ...original, tools: [] });
+  assert.deepEqual(grant, original); assert.equal(toolAuthorityFingerprint(grant), fingerprint);
+  assert.deepEqual((await validateToolAuthority({ ...grant, tools: [] }, { requireBrowserHosts: true })).tools, []);
+  assert.deepEqual((await validateToolAuthority({ ...grant, networkHosts: ['example.com'] }, { managedBrowser: true, requireBrowserHosts: true })).tools, ['browser']);
+  await assert.rejects(validateToolAuthority({ ...grant, networkHosts: ['example.com'] }, { omitUnconfiguredBrowser: true }), /managed network adapter/);
+  for (const invalid of [{ acknowledged: false }, { networkHosts: [''] }, { networkHosts: 'example.com' },
+    { tools: ['browser', 'exec'] }, { browserCapabilities: { evaluate: true } }, { injected: true }])
+    await assert.rejects(validateToolAuthority({ ...grant, ...invalid }, { omitUnconfiguredBrowser: true }));
+  await assert.rejects(authorizeToolCall(grant, call('browser', { action: 'open', targetUrl: 'https://example.com/' }), { managedBrowser: true }),
+    /no local grant/);
+});
+
 test('exec/process require a separate broad OS grant and cannot elevate or select another node', async () => {
   const grant = { enabled: true, acknowledged: true, tools: ['exec', 'process'], roots: [], networkHosts: [], allowExecution: true };
   assert.equal((await authorizeToolCall(grant, call('exec', { command: 'echo fixture', host: 'gateway' }))).params.command, 'echo fixture');
@@ -112,7 +131,8 @@ async function brokerFixture(t, options = {}) {
   await broker.start(); t.after(() => broker.close());
   const config = { apiKey: 'private-test-key-never-show', provider: 'compatible', model: 'fixture' };
   const sessionKey = options.goals && !options.scratch ? `agent:main:chainchat-control:${'a'.repeat(64)}` : 'agent:main:fixture';
-  const context = { root: f.secret, input: 'Read my notes.', loadout: [], purpose: options.plain ? 'plain' : options.utility ? 'utility' : 'candidate', toolAuthority: options.disabled ? undefined : f.grant,
+  const originalGrant = options.toolAuthority ? options.toolAuthority(f.grant) : f.grant;
+  const context = { root: f.secret, input: 'Read my notes.', loadout: [], purpose: options.plain ? 'plain' : options.utility ? 'utility' : 'candidate', toolAuthority: options.disabled ? undefined : originalGrant,
     goalAuthority: options.goalAuthority || (options.goals ? { enabled: true, sessionKey, goalId: 'goal-one' } : undefined),
     readNativeGoal: options.goals ? async () => ({ id: 'goal-one', objective: 'Read my notes.', status: 'active' }) : undefined,
     toolProtectedRoots: [f.secret], event: (...args) => events.push(args), authorize: async () => { authorizations++; if (options.revoked?.()) throw new Error('Revoked'); } };
@@ -123,8 +143,42 @@ async function brokerFixture(t, options = {}) {
     return response.json();
   };
   await request('admit'); const prepared = await request('prepare');
-  return { ...f, broker, request, prepared, nativeCalls, reviews, events, setHead: value => { head = value; }, setTime: value => { time = value; }, get evaluations() { return evaluations; }, get authorizations() { return authorizations; } };
+  return { ...f, broker, request, prepared, nativeCalls, reviews, events, originalGrant, setHead: value => { head = value; }, setTime: value => { time = value; }, get evaluations() { return evaluations; }, get authorizations() { return authorizations; } };
 }
+
+test('ordinary chat with a legacy empty-host Browser grant is reviewed without inheriting any action tools', async t => {
+  const f = await brokerFixture(t, { toolAuthority: grant => ({ ...grant, tools: ['browser'], roots: [] }) });
+  const original = structuredClone(f.originalGrant), fingerprint = toolAuthorityFingerprint(f.originalGrant);
+  assert.equal(f.prepared.allowed, true); assert.deepEqual(f.prepared.toolsAllow, []);
+  for (const tool of [call('browser', { action: 'open', targetUrl: 'https://example.com/' }, 'no-browser'),
+    call('read', { path: path.join(f.work, 'notes.txt') }, 'no-read'), call('exec', { command: 'echo denied' }, 'no-exec'),
+    call('web_fetch', { url: 'https://example.com/' }, 'no-network')])
+    assert.equal((await f.request('tool', { tool })).allowed, false, tool.name);
+  assert.equal(f.reviews.length, 0, 'No denied action may reach semantic review or execution.');
+  const result = await f.request('finalize', { candidate: 'Hello! I can help with your questions.' });
+  assert.equal(result.allowed, true); assert.equal(result.receipt.reviewed, true);
+  assert.equal(f.reviews.length, 1); assert.equal(f.reviews[0].reviewPurpose, 'response');
+  assert.equal(f.nativeCalls.filter(request => request.op === 'evaluate').length, 1, 'The native response gate remains mandatory.');
+  assert.deepEqual(f.originalGrant, original); assert.equal(toolAuthorityFingerprint(f.originalGrant), fingerprint);
+  assert.equal(f.nativeCalls.some(request => ['commit', 'ingest', 'seal'].includes(request.op)), false);
+});
+
+test('an inactive legacy Browser grant preserves other exact grants and their current-owner and PoI checks', async t => {
+  let revoked = false;
+  const f = await brokerFixture(t, { toolAuthority: grant => ({ ...grant, tools: [...grant.tools, 'browser'] }), revoked: () => revoked });
+  assert.deepEqual(f.prepared.toolsAllow, ['read', 'write', 'edit']);
+  assert.equal((await f.request('tool', { tool: call('browser', { action: 'open', targetUrl: 'https://example.com/' }, 'browser-denied') })).allowed, false);
+  assert.equal((await f.request('tool', { tool: call('exec', { command: 'echo denied' }, 'exec-denied') })).allowed, false);
+  assert.equal((await f.request('tool', { tool: call('read', { path: path.join(f.secret, 'private.txt') }, 'outside-denied') })).allowed, false);
+  assert.equal(f.reviews.length, 0);
+  assert.equal((await f.request('tool', { tool: call('read', { path: path.join(f.work, 'notes.txt') }, 'permitted-read') })).allowed, true);
+  assert.equal(f.reviews.length, 1); assert.equal(f.evaluations, 1);
+  assert.equal(f.reviews[0].reviewPurpose, 'action');
+  revoked = true;
+  assert.equal((await f.request('tool', { tool: call('read', { path: path.join(f.work, 'notes.txt') }, 'revoked-read') })).allowed, false);
+  assert.equal(f.reviews.length, 1, 'Revoked original authority must be checked before further review.');
+  assert.deepEqual(f.originalGrant.tools, ['read', 'write', 'edit', 'browser']);
+});
 
 test('a permitted fake tool executes at 150 only after exact semantic and native approval without chain writes', async t => {
   const f = await brokerFixture(t, {assessment:()=>{const value=good();value.scores.covenant=150;for(const fruit of FRUITS)value.fruitages[fruit]=150;return value;}}), tool = call('read', { path: path.join(f.work, 'notes.txt') });

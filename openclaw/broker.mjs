@@ -125,7 +125,8 @@ export function createPoIBroker({ engine, review, generateSummary, channelIngres
     // model-written tool envelope. Utility/reviewer runs cannot inherit it.
     const toolProtectedRoots = [appRoot, context.root, ...(context.toolProtectedRoots || [])];
     const toolAuthority = await validateToolAuthority(context.purpose === 'candidate' && inspected.runtime?.mode !== 'dormant' ? context.toolAuthority || {} : {}, {
-      protectedRoots: toolProtectedRoots, managedBrowser: !!context.browserInvocation, pluginTools: context.pluginTools || [], nativeTools: context.nativeTools || [] });
+      protectedRoots: toolProtectedRoots, managedBrowser: !!context.browserInvocation, omitUnconfiguredBrowser: true,
+      pluginTools: context.pluginTools || [], nativeTools: context.nativeTools || [] });
     let goalAuthority = null;
     if (context.purpose === 'candidate' && context.goalAuthority?.enabled === true) {
       const authority = context.goalAuthority;

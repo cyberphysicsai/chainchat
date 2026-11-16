@@ -66,3 +66,31 @@ test('grant changes, owner revocation and different chains cannot reuse an old b
   const stale = f.context(); stale.toolAuthority.networkHosts = ['example.com'];
   await assert.rejects(f.service.prepareInvocation(stale), /changed before/);
 });
+
+test('legacy empty-host grants skip Browser without changing saved identity or bypassing current-owner checks', async t => {
+  const f = fixture(); t.after(() => f.service.close());
+  const selected = f.snapshot(); selected.grant.networkHosts = []; f.change(selected);
+  const original = f.snapshot(), context = f.context();
+  assert.equal(await f.service.prepareInvocation(context), null);
+  assert.equal(f.authorities.length, 0, 'No Browser process or network authority may be created.');
+  assert.deepEqual(context.toolAuthority, original.grant); assert.deepEqual(f.snapshot(), original);
+  const changed = f.context(); changed.toolAuthority.allowExecution = true;
+  await assert.rejects(f.service.prepareInvocation(changed), /changed before/);
+  await assert.rejects(f.service.prepareInvocation({ ...f.context(), revoked: true }), /Revoked/);
+  await assert.rejects(f.service.prepareInvocation({ ...f.context(), nativeIdentity: { ...f.identity, genesisHash: 'invalid' } }), /verified native agent identity/);
+  assert.equal(f.authorities.length, 0);
+  for (const networkHosts of [undefined, null]) {
+    const legacy = f.snapshot(); legacy.grant.networkHosts = networkHosts; f.change(legacy);
+    assert.equal(await f.service.prepareInvocation(f.context()), null);
+  }
+});
+
+test('removing Browser destinations closes an earlier owned profile instead of reusing its broader lease', async t => {
+  const f = fixture(); t.after(() => f.service.close());
+  const invocation = await f.service.prepareInvocation(f.context());
+  await invocation.releaseInvocation();
+  const changed = f.snapshot(); changed.revision = 'no-hosts'; changed.grant.networkHosts = []; f.change(changed);
+  assert.equal(await f.service.prepareInvocation(f.context()), null);
+  assert.equal(f.authorities.length, 1); assert.equal(f.authorities[0].closed, true);
+  await assert.rejects(invocation.inspectAction({ action: 'snapshot' }), /lease expired/);
+});
