@@ -96,6 +96,34 @@ def main():
     sentinel_digest = digest(sentinel)
     install('repeat-install')
     if digest(chain) != chain_digest or digest(sentinel) != sentinel_digest: raise RuntimeError('Repeat setup changed existing data.')
+    # A complete candidate must be able to repair an owned stale selection. Do
+    # not remove any working executable: the synthetic old pointer names a
+    # missing release wholly inside this disposable installation.
+    active_file, previous_file = target / 'current.json', target / 'previous.json'
+    stale = {**active, 'version': '0.0.0-incomplete', 'release': str(target / 'releases/old-incomplete')}
+    stale_raw = (json.dumps(stale, indent=3) + '\n').encode('utf-8')
+    previous_raw = (json.dumps(active, indent=2) + '\n').encode('utf-8')
+    active_file.write_bytes(stale_raw); previous_file.write_bytes(previous_raw)
+    install('repair-incomplete-selection')
+    if json.loads(active_file.read_text(encoding='utf-8')) != active or previous_file.read_bytes() != previous_raw:
+        raise RuntimeError('Repair did not select the checked release and preserve its healthy rollback record.')
+    retired = list((target / 'install-recovery').glob('current-*.json'))
+    if len(retired) != 1 or retired[0].read_bytes() != stale_raw:
+        raise RuntimeError('Repair did not preserve the exact incomplete selection for inspection.')
+    if (data / 'runtime-owner.json').exists(): raise RuntimeError('--no-launch repair started a runtime.')
+    previous_file.write_bytes(stale_raw)
+    install('retire-incomplete-rollback')
+    retired = list((target / 'install-recovery').glob('previous-*.json'))
+    if previous_file.exists() or len(retired) != 1 or retired[0].read_bytes() != stale_raw:
+        raise RuntimeError('An incomplete rollback remains offered or its evidence was lost.')
+    unsafe = {**active, 'node': str(work / 'outside-installation-node')}
+    unsafe_raw = json.dumps(unsafe).encode('utf-8'); active_file.write_bytes(unsafe_raw)
+    install('unsafe-selection', 1)
+    if active_file.read_bytes() != unsafe_raw or previous_file.exists():
+        raise RuntimeError('An unsafe old pointer was silently accepted or rewritten.')
+    atomic_json(active_file, active)
+    if digest(chain) != chain_digest or digest(sentinel) != sentinel_digest:
+        raise RuntimeError('Repair changed persistent data or Timechain history.')
     removed_access_assets = ('holdings-wallet.js', 'seat-wallet.js', 'license-config.json', 'seat-registry.json')
     if any((release / 'public' / name).exists() for name in removed_access_assets):
         raise RuntimeError('The installed release still contains removed token-access assets.')
@@ -175,6 +203,8 @@ def main():
     if digest(chain) != chain_digest or digest(sentinel) != sentinel_digest: raise RuntimeError('Acceptance changed persistent user data.')
     result = {'installerSha256': digest(artifact), 'version': active['version'], 'platform': active['platform'],
         'freshInstall': True, 'repeatInstall': True, 'nativeVerified': True, 'dataPreserved': True,
+        'incompleteSelectionRepaired': True, 'healthyRollbackPreserved': True, 'incompleteRollbackRetired': True,
+        'unsafeSelectionHeld': True, 'noLaunchRepairDidNotStartRuntime': True,
         'ownedReady': True, 'openclawGatewayReady': True, 'samePidRelaunch': True, 'occupiedPortHeld': True,
         'removedAccessAssetsAbsent': True, 'providerSetupRequiresSession': True,
         'providerSetupBeforeAgentSelection': True, 'providerKeyRemainedPrivate': True,
