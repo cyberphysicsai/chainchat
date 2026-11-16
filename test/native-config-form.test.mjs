@@ -4,7 +4,11 @@ import { mountNativeConfigForm, nativeConfigFields, nativeConfigValue, parseNati
 import { isNativeSensitive } from '../lib/native-config-schema.mjs';
 
 class Node {
-  constructor(tag) { this.tagName = tag; this.children = []; this.handlers = {}; this.dataset = {}; this.attributes = {}; this.textContent = ''; this.value = ''; this.checked = false; this.disabled = false; }
+  constructor(tag) {
+    this.tagName = tag; this.children = []; this.handlers = {}; this.dataset = {}; this.attributes = {}; this.textContent = ''; this.value = ''; this.checked = false; this.disabled = false;
+    // HTMLTextAreaElement.type is getter-only in browsers, unlike input.type.
+    if (tag === 'textarea') Object.defineProperty(this, 'type', { get: () => 'textarea' });
+  }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(name, value) { this.attributes[name] = value; }
@@ -25,6 +29,43 @@ const envelope = { schema: { type: 'object', $defs: { limits: { allOf: [ { type:
   channels: { type: 'object', properties: { telegram: { type: 'object', properties: { botToken: { type: 'string' }, enabled: { type: 'boolean' } } } } },
   custom: { type: 'string' }, future: { type: 'object', properties: { complete: { type: 'boolean' } } },
 } }, uiHints: { custom: { sensitive: true }, 'agents.retries': { label: 'Retry count', advanced: true } } };
+
+for (const { name, schema, hint, value, edited, rows } of [
+  { name: 'multiline', schema: { type: 'string' }, hint: { multiline: true }, value: 'first line\nsecond line', edited: 'updated\ntext', rows: 3 },
+  { name: 'dictionary', schema: { type: 'object', additionalProperties: { type: 'string' } }, value: { theme: 'dark' }, edited: { theme: 'light' }, rows: 5 },
+  { name: 'names', schema: { type: 'array', items: { type: 'string' } }, value: ['first'], edited: ['first', 'second'], rows: 5 },
+  { name: 'preferences', schema: { type: 'object', properties: { density: { type: 'number' } } }, value: { density: 1 }, edited: { density: 2 }, rows: 5 },
+]) {
+  test(`native ${name} textarea preserves its readonly type and saves typed edits`, async () => {
+    const f = fixture({ schema: { type: 'object', properties: { [name]: schema } }, uiHints: hint ? { [name]: hint } : {}, effective: { [name]: value } });
+    const editor = descendants(f.field(name)).find(node => node.tagName === 'textarea');
+    assert.ok(editor);
+    assert.equal(editor.type, 'textarea');
+    assert.throws(() => { editor.type = 'text'; }, TypeError);
+    assert.equal(editor.rows, rows);
+    assert.equal(editor.value, typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+    editor.value = typeof edited === 'string' ? edited : JSON.stringify(edited);
+    await editor.fire('change');
+    assert.deepEqual(f.controller.getPatch(), { [name]: edited });
+    assert.deepEqual(f.errors, []);
+  });
+}
+
+test('native single-line controls retain text and numeric input types and bounds', async () => {
+  const f = fixture({ schema: { type: 'object', properties: {
+    label: { type: 'string' }, retries: { type: 'integer', minimum: 0, maximum: 8 }, temperature: { type: 'number', minimum: 0, maximum: 2 },
+  } }, effective: { label: 'Agent', retries: 2, temperature: 0.5 } });
+  const control = name => descendants(f.field(name)).find(node => node.tagName === 'input');
+  const label = control('label'), retries = control('retries'), temperature = control('temperature');
+  assert.equal(label.type, 'text');
+  assert.equal(retries.type, 'number'); assert.equal(retries.step, '1'); assert.equal(retries.min, '0'); assert.equal(retries.max, '8');
+  assert.equal(temperature.type, 'number'); assert.equal(temperature.step, 'any'); assert.equal(temperature.min, '0'); assert.equal(temperature.max, '2');
+  for (const input of [label, retries, temperature]) assert.equal(input.rows, undefined);
+  retries.value = '3'; await retries.fire('change');
+  temperature.value = '0.75'; await temperature.fire('change');
+  assert.deepEqual(f.controller.getPatch(), { retries: 3, temperature: 0.75 });
+  assert.deepEqual(f.errors, []);
+});
 
 test('native fields retain refs, allOf, maps, arrays, nullable and alternatives without a 500-field cap', () => {
   const fields = nativeConfigFields(envelope, { effective: { mode: null } });

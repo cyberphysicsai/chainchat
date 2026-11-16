@@ -109,7 +109,7 @@ jobs:
           if [[ "$CT_CI_SUITE" == "byok-reliability" ]]; then
             node --test test/openclaw-reliability.integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "native-settings" ]]; then
-            node --test test/openclaw-native-controls.integration.test.mjs test/native-channel-routes.test.mjs test/native-settings-integration.test.mjs
+            node --test test/openclaw-native-controls.integration.test.mjs test/native-channel-routes.test.mjs test/native-settings-integration.test.mjs test/native-config-form.test.mjs test/native-settings-browser.test.mjs test/managed-browser-service.test.mjs test/tool-authority.test.mjs test/chat-errors.test.mjs
           else
             python -m unittest discover -s test -p test_*.py
             node --test --test-concurrency=1 test/*.test.mjs

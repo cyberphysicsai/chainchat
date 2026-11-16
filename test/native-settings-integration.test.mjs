@@ -8,7 +8,7 @@ const html = await fs.readFile(new URL('../public/index.html', import.meta.url),
 const descendants = node => [node, ...node.children.flatMap(descendants)];
 const camel = value => value.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
 class Node {
-  constructor(tag, doc) { this.tagName = tag; this.doc = doc; this.children = []; this.handlers = new Map(); this.dataset = {}; this.attributes = {}; this.textContent = ''; this.value = ''; this.checked = false; this.disabled = false; this.className = ''; }
+  constructor(tag, doc) { this.tagName = tag; this.doc = doc; this.children = []; this.handlers = new Map(); this.dataset = {}; this.attributes = {}; this.textContent = ''; this.value = ''; this.checked = false; this.disabled = false; this.className = ''; if (tag === 'textarea') Object.defineProperty(this, 'type', { get: () => 'textarea' }); }
   set id(value) { this._id = value; this.doc.ids.set(value, this); } get id() { return this._id; }
   get options() { return this.children.filter(node => node.tagName === 'option'); }
   get classList() { const current = () => new Set(this.className.split(/\s+/).filter(Boolean)); return { contains: name => current().has(name), add: name => { const names = current(); names.add(name); this.className = [...names].join(' '); }, remove: name => { const names = current(); names.delete(name); this.className = [...names].join(' '); }, toggle: (name, enabled) => { const names = current(); if (enabled ?? !names.has(name)) names.add(name); else names.delete(name); this.className = [...names].join(' '); } }; }
@@ -34,7 +34,7 @@ function matches(node, selector) {
   return !selector.includes(':checked') || node.checked;
 }
 function documentFixture() {
-  const doc = { ids: new Map(), visibilityState: 'hidden', defaultView: { addEventListener() {} }, createElement(tag) { return new Node(tag, this); }, getElementById(id) { return this.ids.get(id) || null; } };
+  const doc = { ids: new Map(), visibilityState: 'hidden', defaultView: { addEventListener() {} }, createElement(tag) { if (tag === 'textarea' && this.rejectTextareas) throw new Error('Injected settings renderer failure.'); return new Node(tag, this); }, getElementById(id) { return this.ids.get(id) || null; } };
   doc.root = doc.createElement('body'); doc.querySelectorAll = selector => doc.root.querySelectorAll(selector); doc.querySelector = selector => doc.root.querySelector(selector);
   for (const match of html.matchAll(/<([a-z][\w-]*)\b([^>]*?)>/g)) {
     const attrs = [...match[2].matchAll(/([\w-]+)="([^"]*)"/g)];
@@ -59,6 +59,81 @@ function fixture({ save = async () => ({}), channels = { items: [] }, initial = 
   return { doc, controller, calls, get: id => doc.getElementById(id), input: label => doc.querySelectorAll('input').find(node => node.attributes['aria-label'] === label),
     changeAgent(id, revision = 'r2') { current = { ...snapshot(revision), selectedAgentId: id }; controller.syncConnection({ connected, agentId: id }); }, disconnect() { connected = false; controller.syncConnection({ connected: false }); } };
 }
+
+function textareaSnapshot() {
+  const next = snapshot();
+  Object.assign(next.schema.schema.properties.agents.properties.defaults.properties, {
+    notes: { type: 'string' },
+    labels: { type: 'object', additionalProperties: { type: 'string' } },
+    aliases: { type: 'array', items: { type: 'string' } },
+  });
+  next.schema.uiHints['agents.defaults.notes'] = { multiline: true };
+  Object.assign(next.config.effective.agents.defaults, { notes: 'First line\nSecond line', labels: { testing: 'local' }, aliases: ['one'] });
+  return next;
+}
+
+test('native textarea settings do not strand grants or channel loading on the first snapshot or reload', async () => {
+  const next = textareaSnapshot();
+  next.toolCatalogue = [{ name: 'browser', available: true }];
+  next.toolAuthority = { grant: { enabled: true, acknowledged: true, tools: ['browser'], networkHosts: ['example.com'] } };
+  const f = fixture({ initial: next }); await settle();
+  assert.equal(f.get('nativeError').textContent, '');
+  assert.equal(f.get('nativeConnectedControls').disabled, false);
+  assert.equal(f.get('saveNativeConfig').disabled, false);
+  assert.equal(f.get('nativeToolsEnabled').checked, true);
+  assert.equal(f.get('nativeToolHosts').value, 'example.com');
+  assert.ok(f.get('nativeToolChoices').children.length > 0);
+  assert.ok(descendants(f.get('nativeConfigFormMount')).some(node => node.tagName === 'textarea' && node.value === 'First line\nSecond line'));
+  assert.ok(f.calls.some(([route]) => route === '/api/openclaw/channels'));
+  await f.get('refreshNativeControls').fire('click'); await settle();
+  assert.equal(f.get('nativeError').textContent, '');
+  assert.equal(f.get('nativeConnectedControls').disabled, false);
+  assert.equal(f.calls.filter(([route]) => route === '/api/openclaw/channels').length, 2);
+});
+
+test('a settings renderer failure holds config writes while independent permission revocation and reload remain available', async () => {
+  const f = fixture({ initial: textareaSnapshot() }); f.doc.rejectTextareas = true; await settle();
+  assert.equal(f.get('nativeConnectedControls').disabled, false);
+  assert.equal(f.get('saveNativeConfig').disabled, true);
+  assert.equal(f.get('nativeConfigFormMount').inert, true);
+  assert.match(f.get('nativeConfigNotice').textContent, /could not render/i);
+  assert.equal(f.get('disableNativeTools').disabled, false);
+  assert.ok(f.calls.some(([route]) => route === '/api/openclaw/channels'));
+  await f.get('saveNativeConfig').fire('click');
+  assert.equal(f.calls.some(([route]) => route === '/api/openclaw/config'), false);
+  await f.get('disableNativeTools').fire('click'); await settle();
+  assert.deepEqual(f.calls.find(([route]) => route === '/api/openclaw/tools')?.[1], { enabled: false, tools: [], roots: [], networkHosts: [], allowExecution: false, acknowledged: false });
+  f.doc.rejectTextareas = false;
+  await f.get('refreshNativeControls').fire('click'); await settle();
+  assert.equal(f.get('nativeError').textContent, '');
+  assert.equal(f.get('nativeConfigFormMount').inert, false);
+  assert.equal(f.get('saveNativeConfig').disabled, false);
+});
+
+test('a redraw failure while starting Apply is caught before any configuration write', async () => {
+  const f = fixture({ initial: textareaSnapshot() }); await settle();
+  f.doc.rejectTextareas = true;
+  await f.get('saveNativeConfig').fire('click');
+  assert.equal(f.calls.some(([route]) => route === '/api/openclaw/config'), false);
+  assert.equal(f.get('saveNativeConfig').disabled, true);
+  assert.equal(f.get('refreshNativeControls').disabled, false);
+  assert.equal(f.get('disableNativeTools').disabled, false);
+  assert.match(f.get('nativeError').textContent, /settings form could not render/i);
+});
+
+test('a redraw failure after a successful Apply holds further writes without retrying the completed operation', async () => {
+  let f;
+  f = fixture({ initial: textareaSnapshot(), save: async () => { f.doc.rejectTextareas = true; return { applied: true }; } }); await settle();
+  await f.get('saveNativeConfig').fire('click'); await settle();
+  assert.equal(f.calls.filter(([route]) => route === '/api/openclaw/config').length, 1);
+  assert.equal(f.get('nativeConnectedControls').disabled, false);
+  assert.equal(f.get('saveNativeConfig').disabled, true);
+  assert.equal(f.get('refreshNativeControls').disabled, false);
+  assert.equal(f.get('disableNativeTools').disabled, false);
+  await f.get('saveNativeConfig').fire('click');
+  assert.equal(f.calls.filter(([route]) => route === '/api/openclaw/config').length, 1);
+  assert.match(f.get('nativeError').textContent, /settings form could not render/i);
+});
 
 test('root settings mount maps the native schema envelope/effective values to actual typed apply payloads', async () => {
   const f = fixture(); await settle();

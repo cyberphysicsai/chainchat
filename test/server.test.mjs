@@ -426,6 +426,20 @@ test('perspective branches cannot inherit explicit host grants while the selecte
   assert.ok(Object.values(disabled.agents).every(entry => !entry.grant.enabled));
 });
 
+test('new Browser grants without hosts are refused without replacing the current grant, and revocation still works', async t => {
+  const native = managedNativeFixture(), f = await fixture(t, { openclawFactory: native.factory }); await f.ready();
+  const grant = { enabled: true, tools: ['read'], roots: [], networkHosts: [], acknowledged: true };
+  assert.equal((await f.request('/api/openclaw/tools', grant)).status, 200);
+  const file = path.join(f.dataDir, 'tool-permissions.json'), before = await fs.readFile(file, 'utf8');
+  const denied = await f.request('/api/openclaw/tools', { ...grant, tools: ['browser'] });
+  assert.equal(denied.status, 403); assert.equal(denied.body.code, 'BROWSER_HOSTS_REQUIRED');
+  assert.equal(await fs.readFile(file, 'utf8'), before, 'A rejected grant must not replace or revise existing permissions.');
+  assert.equal((await f.request('/api/openclaw/tools', { enabled: false })).status, 200);
+  const saved = JSON.parse(await fs.readFile(file, 'utf8'));
+  assert.ok(Object.values(saved.agents).every(entry => !entry.grant.enabled));
+  assert.equal(f.modelCalls.length, 0); assert.equal(native.generated.length, 0);
+});
+
 test('installer launch nonce is single-use and scoped to the local page', async t => {
   const f = await fixture(t);
   const nonce = f.issueLaunchNonce();

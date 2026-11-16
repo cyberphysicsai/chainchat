@@ -2613,7 +2613,7 @@ export async function createApp(options = {}) {
             const current = toolPermissions.get(authorityKey(identity)).grant;
             const grant = await validateToolAuthority({...input,
               ...(!Object.hasOwn(input, 'nativeCapabilities') && current.nativeCapabilities ? {nativeCapabilities: current.nativeCapabilities} : {})},
-              { protectedRoots: protectedToolRoots(), managedBrowser: !!browserService, pluginTools: pluginTools.map(tool => tool.name), nativeTools });
+              { protectedRoots: protectedToolRoots(), managedBrowser: !!browserService, requireBrowserHosts: true, pluginTools: pluginTools.map(tool => tool.name), nativeTools });
             const saved = await toolPermissions.set(authorityKey(identity), grant);
             cancelAgent(identity.record);
             await browserService?.revoke(identity);

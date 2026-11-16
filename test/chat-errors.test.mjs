@@ -69,3 +69,14 @@ test('expired local sessions recover through app authentication without wallet a
   assert.equal(chatFailure({ code: 'SESSION_CHANGED' }).action, 'model');
   assert.equal(chatFailure({ code: 'SESSION_CHANGED' }).stage, 'authorization');
 });
+
+test('local browser and tool denials retain actionable codes without exposing transport details or blaming the provider', () => {
+  for (const code of ['BROWSER_HOSTS_REQUIRED', 'BROWSER_AUTHORITY_DENIED', 'MANAGED_BROWSER_DENIED', 'HOST_TOOL_DENIED']) {
+    const view = chatFailure({ code, message: 'private raw error', response: 'private raw response' });
+    assert.equal(view.code, code); assert.equal(view.stage, 'authorization');
+    assert.equal(view.action, 'native'); assert.equal(view.kind, 'authorization');
+    assert.match(view.message, /Tool access/);
+    assert.doesNotMatch(JSON.stringify(view), /private raw/);
+  }
+  assert.match(chatFailure({ code: 'BROWSER_AUTHORITY_DENIED' }).message, /does not establish a provider rejection/);
+});
