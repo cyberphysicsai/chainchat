@@ -79,8 +79,8 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
   const tempBase = await fs.realpath(os.tmpdir());
   const directory = await fs.realpath(await fs.mkdtemp(path.join(tempBase, 'ct-tools-ui-')));
   const root = path.join(directory, 'agent'), workspace = path.join(directory, 'workspace');
-  let app, browser, upstream, gatewayChild, initialGatewayPid, browserBearer = '', gatewayStarts = 0;
-  const gatewayPids = new Set(), requests = [], reviews = [], nativeCalls = [], diagnostics = [], pageErrors = [];
+  let app, browser, upstream, gatewayChild, initialGatewayPid, gatewayBaselineStarts, browserBearer = '', gatewayStarts = 0;
+  const gatewayChildren = [], requests = [], reviews = [], nativeCalls = [], diagnostics = [], pageErrors = [];
   const toolPlan = [];
   t.after(async () => {
     try { await browser?.close(); }
@@ -146,7 +146,7 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       if (Array.isArray(argv) && typeof argv[0] === 'string' &&
           path.resolve(argv[0]) === path.join(application, 'openclaw', 'gateway-bootstrap.mjs') &&
           path.basename(argv[1] || '') === 'openclaw.mjs' && argv[2] === 'gateway' && argv[3] === 'run') {
-        gatewayChild = child; gatewayStarts++; gatewayPids.add(child.pid);
+        gatewayChild = child; gatewayStarts++; gatewayChildren.push(child);
       }
       return child;
     } }),
@@ -199,17 +199,28 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       return requests.slice(start);
     };
     const assertGatewayStable = () => {
+      const alive = gatewayChildren.filter(child => child.exitCode === null && child.signalCode === null);
+      const detail = JSON.stringify({ baselineGeneration: gatewayBaselineStarts, observedGenerations: gatewayStarts,
+        originalPid: initialGatewayPid, livePids: alive.map(child => child.pid).slice(-8) });
       assert.ok(Number.isSafeInteger(initialGatewayPid) && initialGatewayPid > 0, 'Observe the real Gateway PID after the first chat.');
-      assert.equal(gatewayStarts, 1, 'Applying or revoking tools must never restart the Gateway.');
-      assert.deepEqual([...gatewayPids], [initialGatewayPid]);
-      assert.equal(gatewayChild.pid, initialGatewayPid);
+      assert.ok(Number.isSafeInteger(gatewayBaselineStarts) && gatewayBaselineStarts >= 1, detail);
+      assert.equal(gatewayStarts, gatewayBaselineStarts, `Permission changes must never start another Gateway: ${detail}`);
+      assert.equal(alive.length, 1, `Only the post-setup Gateway may remain alive: ${detail}`);
+      assert.equal(alive[0], gatewayChild, detail);
+      assert.equal(gatewayChild.pid, initialGatewayPid, detail);
       assert.equal(gatewayChild.exitCode, null, 'The original Gateway must still be alive.');
       assert.equal(gatewayChild.signalCode, null);
     };
     await t.test('fresh host grant is disabled and the live model sees that boundary', async () => {
       assertGrant(await chat('Acknowledge the fresh disposable test without using tools.'), false);
+      // Setup audits and enables native cron, then the selected provider's
+      // output limits replace startup defaults. These configuration changes
+      // may legitimately restart the Gateway before the first turn completes.
+      // Every permission operation below must preserve this settled instance.
       initialGatewayPid = gatewayChild?.pid;
+      gatewayBaselineStarts = gatewayStarts;
       assertGatewayStable();
+      t.diagnostic(`Gateway permission baseline established after setup: generation ${gatewayBaselineStarts}, one live process.`);
     });
     await t.test('additional native settings permission does not silently enable files or shell', async () => {
       assertGatewayStable();
