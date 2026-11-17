@@ -21,6 +21,218 @@ import build_posix
 
 
 class PortableInstallerGuards(unittest.TestCase):
+    def active_fixture(self, root, name, missing=None):
+        release, runtime = root / 'releases' / name, root / 'runtimes' / name
+        if missing != 'release':
+            (release / 'openclaw').mkdir(parents=True)
+            if missing != 'launcher':
+                (release / 'openclaw/launcher.mjs').write_text('// fixture only\n', encoding='utf-8')
+        runtime.mkdir(parents=True)
+        for executable in ('node', 'python'):
+            if missing != executable:
+                (runtime / executable).write_text('not executed', encoding='utf-8')
+        (root / 'data').mkdir(exist_ok=True)
+        return {'product': 'cypher-tempre-chainchat', 'version': {'new': '1.1.2', 'old': '1.1.1', 'rollback': '1.1.0'}[name], 'payloadSha256': 'a' * 64,
+                'release': str(release), 'node': str(runtime / 'node'),
+                'python': str(runtime / 'python'), 'data': str(root / 'data')}
+
+    def test_owned_incomplete_previous_release_can_be_repaired_without_changing_data_or_rollback(self):
+        for missing in ('release', 'launcher', 'node', 'python'):
+            for no_launch in (False, True):
+                with self.subTest(missing=missing, no_launch=no_launch), tempfile.TemporaryDirectory(prefix='ct-posix-repair-') as temporary:
+                    root = Path(temporary).resolve()
+                    active = self.active_fixture(root, 'new')
+                    old = self.active_fixture(root, 'old', missing)
+                    rollback = self.active_fixture(root, 'rollback')
+                    current_raw = (json.dumps(old, indent=3) + '\n').encode()
+                    rollback_raw = (json.dumps(rollback, indent=2) + '\n').encode()
+                    (root / 'current.json').write_bytes(current_raw)
+                    (root / 'previous.json').write_bytes(rollback_raw)
+                    history = root / 'data/history'; history.write_bytes(b'existing chain bytes\n')
+                    with self.assertRaises(installer.IncompleteReleaseError):
+                        installer.check_active(root, old)
+                    with mock.patch.object(installer, 'run_checked') as stop, contextlib.redirect_stderr(io.StringIO()) as notice:
+                        installer.promote_release(root, active, no_launch)
+                    self.assertEqual(json.loads((root / 'current.json').read_text(encoding='utf-8')), active)
+                    self.assertEqual((root / 'previous.json').read_bytes(), rollback_raw)
+                    self.assertEqual(history.read_bytes(), b'existing chain bytes\n')
+                    records = list((root / 'install-recovery').glob('current-*.json'))
+                    self.assertEqual(len(records), 1); self.assertEqual(records[0].read_bytes(), current_raw)
+                    self.assertIn('previous application files are incomplete', notice.getvalue())
+                    if no_launch:
+                        stop.assert_not_called()
+                    else:
+                        stop.assert_called_once_with([active['node'], Path(active['release']) / 'openclaw/launcher.mjs', '--stop'],
+                                                     active, root / 'install.log', 60)
+
+    def test_healthy_previous_release_remains_rollback_and_only_verified_new_launcher_can_stop(self):
+        with tempfile.TemporaryDirectory(prefix='ct-posix-update-') as temporary:
+            root = Path(temporary).resolve()
+            active, old = self.active_fixture(root, 'new'), self.active_fixture(root, 'old')
+            (root / 'current.json').write_text(json.dumps(old), encoding='utf-8')
+            with mock.patch.object(installer, 'run_checked') as stop:
+                installer.promote_release(root, active, False)
+            self.assertEqual(json.loads((root / 'previous.json').read_text(encoding='utf-8')), old)
+            self.assertEqual(stop.call_args.args[0][0], active['node'])
+            self.assertFalse((root / 'install-recovery').exists())
+
+    def test_idempotent_reinstall_retains_healthy_prior_rollback(self):
+        with tempfile.TemporaryDirectory(prefix='ct-posix-same-release-') as temporary:
+            root = Path(temporary).resolve()
+            active, rollback = self.active_fixture(root, 'new'), self.active_fixture(root, 'rollback')
+            (root / 'current.json').write_text(json.dumps(active), encoding='utf-8')
+            raw = (json.dumps(rollback, indent=3) + '\n').encode(); (root / 'previous.json').write_bytes(raw)
+            with mock.patch.object(installer, 'run_checked') as stop:
+                installer.promote_release(root, active, True)
+            stop.assert_not_called(); self.assertEqual((root / 'previous.json').read_bytes(), raw)
+
+    def test_missing_rollback_is_archived_and_never_offered_as_a_working_release(self):
+        for healthy_current in (False, True):
+            with self.subTest(healthy_current=healthy_current), tempfile.TemporaryDirectory(prefix='ct-posix-retired-rollback-') as temporary:
+                root = Path(temporary).resolve()
+                active = self.active_fixture(root, 'new')
+                old = self.active_fixture(root, 'old', None if healthy_current else 'node')
+                rollback = self.active_fixture(root, 'rollback', 'launcher')
+                current_raw = json.dumps(old, indent=2).encode(); rollback_raw = json.dumps(rollback, indent=3).encode()
+                (root / 'current.json').write_bytes(current_raw); (root / 'previous.json').write_bytes(rollback_raw)
+                with mock.patch.object(installer, 'run_checked') as stop, contextlib.redirect_stderr(io.StringIO()):
+                    installer.promote_release(root, active, True)
+                stop.assert_not_called(); self.assertEqual(json.loads((root / 'current.json').read_text(encoding='utf-8')), active)
+                archived = list((root / 'install-recovery').glob('previous-*.json'))
+                self.assertEqual(len(archived), 1); self.assertEqual(archived[0].read_bytes(), rollback_raw)
+                if healthy_current:
+                    self.assertEqual(json.loads((root / 'previous.json').read_text(encoding='utf-8')), old)
+                else:
+                    self.assertFalse((root / 'previous.json').exists())
+                    with self.assertRaisesRegex(ValueError, 'No complete previous release'):
+                        installer.rollback(root, quiet=True, no_launch=True)
+
+    def test_owner_pointer_changes_during_stop_hold_promotion_without_overwriting_their_edits(self):
+        for name in ('current.json', 'previous.json'):
+            with self.subTest(name=name), tempfile.TemporaryDirectory(prefix='ct-posix-pointer-race-') as temporary:
+                root = Path(temporary).resolve()
+                active = self.active_fixture(root, 'new')
+                old, rollback = self.active_fixture(root, 'old', 'node'), self.active_fixture(root, 'rollback')
+                before = {'current.json': json.dumps(old).encode(), 'previous.json': json.dumps(rollback).encode()}
+                for filename, raw in before.items(): (root / filename).write_bytes(raw)
+                changed = (json.dumps(active, indent=4) + '\n').encode()
+                def owner_edit(*_): (root / name).write_bytes(changed)
+                with mock.patch.object(installer, 'run_checked', side_effect=owner_edit), self.assertRaisesRegex(RuntimeError, 'selection changed'):
+                    installer.promote_release(root, active, False)
+                for filename, raw in before.items():
+                    self.assertEqual((root / filename).read_bytes(), changed if filename == name else raw)
+                self.assertFalse((root / 'install-recovery').exists())
+
+    def test_failed_authenticated_stop_does_not_promote_or_archive_pointers(self):
+        with tempfile.TemporaryDirectory(prefix='ct-posix-stop-held-') as temporary:
+            root = Path(temporary).resolve()
+            active, old = self.active_fixture(root, 'new'), self.active_fixture(root, 'old', 'node')
+            raw = json.dumps(old).encode(); (root / 'current.json').write_bytes(raw)
+            with mock.patch.object(installer, 'run_checked', side_effect=RuntimeError('Authentication held.')), self.assertRaisesRegex(RuntimeError, 'Authentication held'):
+                installer.promote_release(root, active, False)
+            self.assertEqual((root / 'current.json').read_bytes(), raw)
+            self.assertFalse((root / 'previous.json').exists()); self.assertFalse((root / 'install-recovery').exists())
+
+    def test_files_are_rechecked_after_stop_before_candidate_or_rollback_promotion(self):
+        for changed in ('candidate', 'current', 'rollback'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory(prefix='ct-posix-file-race-') as temporary:
+                root = Path(temporary).resolve()
+                active, old, rollback = (self.active_fixture(root, name) for name in ('new', 'old', 'rollback'))
+                current_raw, rollback_raw = json.dumps(old).encode(), json.dumps(rollback).encode()
+                (root / 'current.json').write_bytes(current_raw); (root / 'previous.json').write_bytes(rollback_raw)
+                chosen = active if changed == 'candidate' else old if changed == 'current' else rollback
+                def missing_after_stop(*_): Path(chosen['python']).unlink()
+                with mock.patch.object(installer, 'run_checked', side_effect=missing_after_stop), contextlib.redirect_stderr(io.StringIO()):
+                    if changed == 'candidate':
+                        with self.assertRaises(installer.IncompleteReleaseError): installer.promote_release(root, active, False)
+                    else:
+                        installer.promote_release(root, active, False)
+                if changed == 'candidate':
+                    self.assertEqual((root / 'current.json').read_bytes(), current_raw)
+                    self.assertEqual((root / 'previous.json').read_bytes(), rollback_raw)
+                    self.assertFalse((root / 'install-recovery').exists())
+                elif changed == 'current':
+                    self.assertEqual((root / 'previous.json').read_bytes(), rollback_raw)
+                    self.assertEqual(len(list((root / 'install-recovery').glob('current-*.json'))), 1)
+                else:
+                    self.assertEqual(json.loads((root / 'previous.json').read_text(encoding='utf-8')), old)
+                    self.assertEqual(len(list((root / 'install-recovery').glob('previous-*.json'))), 1)
+
+    def test_malformed_or_unowned_pointers_never_enter_missing_file_recovery(self):
+        for pointer in ('current.json', 'previous.json'):
+            for malformed in ('json', 'null', 'product', 'version', 'hash', 'missing-hash', 'outside-node', 'wrong-data', 'wrong-release'):
+                with self.subTest(pointer=pointer, malformed=malformed), tempfile.TemporaryDirectory(prefix='ct-posix-repair-guard-') as temporary:
+                    root = Path(temporary).resolve()
+                    active = self.active_fixture(root, 'new')
+                    old = self.active_fixture(root, 'old', 'node')
+                    (root / 'current.json').write_text(json.dumps(old), encoding='utf-8')
+                    bad = dict(old)
+                    if malformed == 'product': bad['product'] = 'another-app'
+                    if malformed == 'version': bad['version'] = 'not-a-version'
+                    if malformed == 'hash': bad['payloadSha256'] = 'invalid'
+                    if malformed == 'missing-hash': bad.pop('payloadSha256')
+                    if malformed == 'outside-node': bad['node'] = str(root.parent / 'outside-node')
+                    if malformed == 'wrong-data': bad['data'] = str(root / 'another-data')
+                    if malformed == 'wrong-release': bad['release'] = str(root / 'another-release')
+                    raw = b'{' if malformed == 'json' else b'null' if malformed == 'null' else json.dumps(bad).encode()
+                    (root / pointer).write_bytes(raw)
+                    before = {p.name: p.read_bytes() for p in (root / 'current.json', root / 'previous.json') if p.exists()}
+                    with mock.patch.object(installer, 'run_checked') as stop, self.assertRaises(ValueError):
+                        installer.promote_release(root, active, False)
+                    stop.assert_not_called(); self.assertFalse((root / 'install-recovery').exists())
+                    self.assertEqual({name: (root / name).read_bytes() for name in before}, before)
+
+    def test_access_failures_and_wrong_file_types_are_not_treated_as_missing_old_files(self):
+        for kind in ('permission', 'directory'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(prefix='ct-posix-file-kind-') as temporary:
+                root = Path(temporary).resolve()
+                active, old = self.active_fixture(root, 'new'), self.active_fixture(root, 'old', 'node')
+                node = Path(old['node'])
+                if kind == 'directory': node.mkdir()
+                (root / 'current.json').write_text(json.dumps(old), encoding='utf-8')
+                original = Path.stat
+                def inspect(filename, *args, **kwargs):
+                    if kind == 'permission' and filename == node:
+                        raise PermissionError('Fixture access refused.')
+                    return original(filename, *args, **kwargs)
+                expected = PermissionError if kind == 'permission' else ValueError
+                with mock.patch.object(Path, 'stat', inspect), mock.patch.object(installer, 'run_checked') as stop, self.assertRaises(expected):
+                    installer.promote_release(root, active, False)
+                stop.assert_not_called(); self.assertFalse((root / 'install-recovery').exists())
+
+    def test_repair_does_not_stop_or_prepare_rollback_when_new_candidate_is_incomplete(self):
+        with tempfile.TemporaryDirectory(prefix='ct-posix-bad-candidate-') as temporary:
+            root = Path(temporary).resolve()
+            active, old = self.active_fixture(root, 'new', 'launcher'), self.active_fixture(root, 'old', 'node')
+            raw = json.dumps(old).encode(); (root / 'current.json').write_bytes(raw)
+            with mock.patch.object(installer, 'run_checked') as stop, self.assertRaises(installer.IncompleteReleaseError):
+                installer.promote_release(root, active, False)
+            stop.assert_not_called(); self.assertEqual((root / 'current.json').read_bytes(), raw)
+            self.assertFalse((root / 'previous.json').exists()); self.assertFalse((root / 'install-recovery').exists())
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX symbolic-link guard')
+    def test_repair_refuses_symlinked_pointers_recovery_and_release_directories(self):
+        for kind in ('current', 'previous', 'recovery', 'release'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(prefix='ct-posix-repair-link-') as temporary:
+                root = Path(temporary).resolve()
+                active, old = self.active_fixture(root, 'new'), self.active_fixture(root, 'old', 'node')
+                raw = json.dumps(old).encode()
+                (root / 'current.json').write_bytes(raw)
+                if kind in ('current', 'previous'):
+                    target = root / 'pointer-record.json'; target.write_bytes(raw)
+                    selected = root / ('current.json' if kind == 'current' else 'previous.json')
+                    if selected.exists(): selected.unlink()
+                    selected.symlink_to(target)
+                elif kind == 'recovery':
+                    target = root / 'recovery-target'; target.mkdir()
+                    (root / 'install-recovery').symlink_to(target, target_is_directory=True)
+                else:
+                    target = Path(old['release']); target.rename(root / 'old-release-target')
+                    target.symlink_to(root / 'old-release-target', target_is_directory=True)
+                with mock.patch.object(installer, 'run_checked') as stop, self.assertRaises(ValueError):
+                    installer.promote_release(root, active, False)
+                stop.assert_not_called()
+
     @unittest.skipIf(os.name == 'nt', 'POSIX portable-Python startup acceptance runs in native CI.')
     def test_managed_python_environment_blocks_user_site_startup_code(self):
         with tempfile.TemporaryDirectory(prefix='ct-user-site-') as directory:

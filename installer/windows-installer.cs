@@ -208,10 +208,15 @@ namespace CypherTempreInstaller {
       return root;
     }
     static void RejectLinks(string path) {
-      string current = Path.GetFullPath(path);
+      string current = Path.GetFullPath(path); bool leaf=true;
       while (!String.IsNullOrEmpty(current)) {
-        if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Installation paths may not traverse symbolic links or junctions.");
-        current = Path.GetDirectoryName(current);
+        try {
+          FileAttributes attributes=File.GetAttributes(current);
+          if((attributes & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Installation paths may not traverse symbolic links or junctions.");
+          if(!leaf && (attributes & FileAttributes.Directory)==0) throw new InvalidOperationException("Installation parent paths must be directories.");
+        }
+        catch(FileNotFoundException) {} catch(DirectoryNotFoundException) {}
+        current = Path.GetDirectoryName(current);leaf=false;
       }
     }
     static string Child(string root, string relative) {
@@ -375,17 +380,99 @@ namespace CypherTempreInstaller {
       }
     }
     static void Log(string message) { lock(typeof(Installer)) { Write(message); if(installLog != null) File.AppendAllText(installLog, DateTime.UtcNow.ToString("o") + " " + message + Environment.NewLine); } }
-    static void ValidateRelease(ActiveRelease active, string root) {
-      if(active == null || active.product != Product || !active.release.StartsWith(Path.Combine(root,"releases") + "\\", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The selected release pointer is invalid.");
+    sealed class IncompleteReleaseException : InvalidOperationException {
+      public IncompleteReleaseException(string components):base("The selected release is incomplete (missing " + components + "). Re-run the verified installer.") {}
+    }
+    sealed class PriorRelease {
+      public ActiveRelease value;
+      public byte[] bytes;
+      public bool complete;
+      public string incompleteReason;
+    }
+    static void ValidateReleasePaths(ActiveRelease active, string root) {
+      if(active == null || active.product != Product || String.IsNullOrEmpty(active.release) ||
+          String.IsNullOrEmpty(active.version) || !System.Text.RegularExpressions.Regex.IsMatch(active.version,"^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$") ||
+          String.IsNullOrEmpty(active.payloadSha256) || active.payloadSha256.Length != 64 || active.payloadSha256.Any(c=>!((c>='0' && c<='9') || (c>='a' && c<='f'))) ||
+          !active.release.StartsWith(Path.Combine(root,"releases") + "\\", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The selected release pointer is invalid.");
       foreach(string path in new[]{active.release,active.node,active.python}) {
-        if(String.IsNullOrEmpty(path) || !Path.GetFullPath(path).StartsWith(root.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("A release path is outside the installation.");
+        if(String.IsNullOrEmpty(path) || !path.StartsWith(root.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase) ||
+            !String.Equals(Path.GetFullPath(path),path,StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("A release path is outside the installation or is not canonical.");
         Child(root,path.Substring(root.Length+1));
       }
-      if(!File.Exists(active.node) || !File.Exists(active.python) || !File.Exists(Path.Combine(active.release,"openclaw","launcher.mjs"))) throw new InvalidOperationException("The selected release is incomplete. Re-run the verified installer.");
+      Child(root,Path.Combine(active.release,"openclaw","launcher.mjs").Substring(root.Length+1));
       if(!String.Equals(active.data, Path.Combine(root,"data"), StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("The selected data directory is invalid.");
+      CheckOptionalDirectory(active.data);
+    }
+    static void CheckOptionalDirectory(string path) {
+      RejectLinks(path);
+      try { if((File.GetAttributes(path)&FileAttributes.Directory)==0)throw new InvalidOperationException("An installation directory has the wrong file type."); }
+      catch(FileNotFoundException) {} catch(DirectoryNotFoundException) {}
+    }
+    static void ValidateReleaseFiles(ActiveRelease active) {
+      string[] files={active.release,active.node,active.python,Path.Combine(active.release,"openclaw","launcher.mjs")};
+      string[] names={"application directory","Node.js runtime","portable Python","launcher"}; List<string> missing=new List<string>();
+      for(int i=0;i<files.Length;i++) {
+        try {
+          FileAttributes attributes=File.GetAttributes(files[i]);
+          if((attributes & FileAttributes.ReparsePoint)!=0 || ((attributes & FileAttributes.Directory)!=0)!=(i==0)) throw new InvalidOperationException("A required release path has the wrong file type.");
+        } catch(FileNotFoundException) {missing.Add(names[i]);} catch(DirectoryNotFoundException) {missing.Add(names[i]);}
+      }
+      if(missing.Count != 0) throw new IncompleteReleaseException(String.Join(", ",missing));
+    }
+    static void ValidateRelease(ActiveRelease active, string root) {
+      ValidateReleasePaths(active,root); ValidateReleaseFiles(active);
+    }
+    static byte[] ReadPointerBytes(string file) {
+      RejectLinks(file); byte[] bytes;
+      using(FileStream input=File.OpenRead(file)) {
+        if(input.Length>65536) throw new InvalidOperationException("The selected release pointer exceeds its bounds.");
+        using(MemoryStream copy=new MemoryStream()) {input.CopyTo(copy);bytes=copy.ToArray();}
+      }
+      return bytes;
+    }
+    static PriorRelease ParsePriorRelease(byte[] bytes, string root) {
+      ActiveRelease active;
+      using(StreamReader input=new StreamReader(new MemoryStream(bytes),new UTF8Encoding(false,true),true)) active=Json.Deserialize<ActiveRelease>(input.ReadToEnd());
+      ValidateReleasePaths(active,root);
+      PriorRelease prior=new PriorRelease {value=active,bytes=bytes,complete=true};
+      try {ValidateReleaseFiles(active);} catch(IncompleteReleaseException error) {prior.complete=false;prior.incompleteReason=error.Message;}
+      return prior;
+    }
+    static PriorRelease ReadPriorRelease(string file, string root) {return ParsePriorRelease(ReadPointerBytes(file),root);}
+    static PriorRelease OptionalPriorRelease(string file, string root) {
+      byte[] bytes;
+      try {bytes=ReadPointerBytes(file);} catch(FileNotFoundException) {return null;} catch(DirectoryNotFoundException) {return null;}
+      return ParsePriorRelease(bytes,root);
     }
     static ActiveRelease ReadRelease(string file, string root) {
-      RejectLinks(file); ActiveRelease active = Json.Deserialize<ActiveRelease>(File.ReadAllText(file)); ValidateRelease(active, root); return active;
+      PriorRelease prior=ReadPriorRelease(file,root); if(!prior.complete) throw new IncompleteReleaseException("required runtime files"); return prior.value;
+    }
+    static void ArchiveIncompletePointer(string root, string kind, PriorRelease prior) {
+      string recovery=Child(root,"install-recovery"); Directory.CreateDirectory(recovery);
+      string saved=Child(recovery,kind+"-"+Guid.NewGuid().ToString("N")+".json");
+      if(kind=="previous") File.Move(Child(root,"previous.json"),saved);
+      else using(FileStream output=new FileStream(saved,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {output.Write(prior.bytes,0,prior.bytes.Length);output.Flush(true);}
+      Log(prior.incompleteReason + " Its exact " + kind + " pointer was preserved in install-recovery; it is unavailable for rollback.");
+    }
+    static void PromoteRelease(ActiveRelease active, string root, bool stopCurrent, Action<ActiveRelease> stop) {
+      // All paths and identities are checked before any pointer or rollback changes.
+      ValidateRelease(active,root);
+      string currentFile=Child(root,"current.json"),previousFile=Child(root,"previous.json");
+      PriorRelease current=OptionalPriorRelease(currentFile,root);
+      PriorRelease previous=OptionalPriorRelease(previousFile,root); // Unsafe rollback records remain a hard hold.
+      if(current!=null && !current.complete || previous!=null && !previous.complete) CheckOptionalDirectory(Child(root,"install-recovery"));
+      // Execute only the newly verified runtime. Its owner-authenticated stop
+      // handles absent/stale ownership and refuses unknown live processes.
+      if(current!=null && stopCurrent) stop(active);
+      PriorRelease currentNow=OptionalPriorRelease(currentFile,root),previousNow=OptionalPriorRelease(previousFile,root);
+      if((current==null)!=(currentNow==null) || current!=null && !current.bytes.SequenceEqual(currentNow.bytes) ||
+          (previous==null)!=(previousNow==null) || previous!=null && !previous.bytes.SequenceEqual(previousNow.bytes))
+        throw new InvalidOperationException("An installation pointer changed during activation. Inspect it before retrying.");
+      ValidateRelease(active,root);current=currentNow;previous=previousNow;
+      if(current!=null && !current.complete) ArchiveIncompletePointer(root,"current",current);
+      if(previous!=null && !previous.complete) ArchiveIncompletePointer(root,"previous",previous);
+      if(current!=null && current.complete && !String.Equals(current.value.release,active.release,StringComparison.OrdinalIgnoreCase)) AtomicJson(previousFile,current.value);
+      AtomicJson(currentFile,active);
     }
     static bool OwnedRuntimeReady(ActiveRelease active,out int ownerPid) {
       ownerPid=0;
@@ -461,6 +548,7 @@ namespace CypherTempreInstaller {
       string root = options.root, activeFile = Path.Combine(root,"current.json"), previousFile = Path.Combine(root,"previous.json");
       if(options.launch) { Launch(ReadRelease(activeFile,root),root); RecordResult(options,true,"ChainChat local runtime is ready."); return; }
       if(options.rollback) {
+        if(!File.Exists(previousFile)) throw new InvalidOperationException("No complete previous release is available for rollback. Any incomplete pointer evidence is preserved in install-recovery. Re-run the verified installer to repair this installation.");
         ActiveRelease previous = ReadRelease(previousFile,root); ActiveRelease current = ReadRelease(activeFile,root);
         if(!options.noLaunch) Run(current.node,new[]{Path.Combine(current.release,"openclaw","launcher.mjs"),"--stop"},current.release,EnvironmentFor(current,root),120);
         AtomicJson(previousFile,current); AtomicJson(activeFile,previous);
@@ -544,13 +632,10 @@ namespace CypherTempreInstaller {
         Run(active.python,new[]{"-c","import sys,json,hashlib,pathlib,subprocess; import engine_bridge; print('Python and native engine ready')"},release,EnvironmentFor(active,root),30);
         Run(active.node,new[]{Path.Combine(release,"openclaw","launcher.mjs"),"--check"},release,EnvironmentFor(active,root),120);
         Directory.CreateDirectory(active.data);
-        if(!options.noLaunch && File.Exists(activeFile)) {
-          ActiveRelease current=ReadRelease(activeFile,root);
-          Log("Stopping the previously installed ChainChat runtime through its authenticated local owner control");
-          Run(current.node,new[]{Path.Combine(current.release,"openclaw","launcher.mjs"),"--stop"},current.release,EnvironmentFor(current,root),120);
-        }
-        if(File.Exists(activeFile)) AtomicJson(previousFile,ReadRelease(activeFile,root));
-        AtomicJson(activeFile,active);
+        PromoteRelease(active,root,!options.noLaunch,delegate(ActiveRelease verified) {
+          Log("Stopping the previously installed ChainChat runtime through its authenticated local owner control using the verified new release");
+          Run(verified.node,new[]{Path.Combine(verified.release,"openclaw","launcher.mjs"),"--stop"},verified.release,EnvironmentFor(verified,root),120);
+        });
         string launcher=Path.Combine(root,"ChainChat.exe");
         if(!String.Equals(Assembly.GetExecutingAssembly().Location,launcher,StringComparison.OrdinalIgnoreCase)) File.Copy(Assembly.GetExecutingAssembly().Location,launcher,true);
         if(!options.noShortcuts) { Shortcut(launcher,"--launch --install-root "+Quote(root),root); if(File.Exists(previousFile)) Shortcut(launcher,"--rollback --install-root "+Quote(root),root); }
@@ -562,6 +647,69 @@ namespace CypherTempreInstaller {
     public static void RecordResult(Options options, bool ok, string message) {
       if(String.IsNullOrEmpty(options.resultFile)) return;
       AtomicJson(Path.GetFullPath(options.resultFile),new {ok=ok,message=message,installRoot=options.root});
+    }
+    static ActiveRelease FixtureRelease(string root, string version) {
+      ActiveRelease active=new ActiveRelease {product=Product,version=version,payloadSha256=new string('a',64),
+        release=Path.Combine(root,"releases",version+"-fixture"),node=Path.Combine(root,"runtimes","node-"+version,"node.exe"),data=Path.Combine(root,"data")};
+      active.python=Path.Combine(active.release,".runtime","python","python.exe");
+      foreach(string file in new[]{active.node,active.python,Path.Combine(active.release,"openclaw","launcher.mjs")}) {
+        Directory.CreateDirectory(Path.GetDirectoryName(file));File.WriteAllText(file,"fixture only; never execute");
+      }
+      Directory.CreateDirectory(active.data);return active;
+    }
+    static void ReleaseRecoverySelfTests(string temporary) {
+      for(int missing=0;missing<3;missing++) {
+        string root=Child(temporary,"repair-"+missing);Directory.CreateDirectory(root);
+        ActiveRelease old=FixtureRelease(root,"1.0.3"),previous=FixtureRelease(root,"1.0.2"),next=FixtureRelease(root,"1.1.2");
+        string currentFile=Child(root,"current.json"),previousFile=Child(root,"previous.json"),sentinel=Child(old.data,"history.fixture");
+        byte[] original=Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(" \n"+Json.Serialize(old)+"\n")).ToArray();
+        File.WriteAllBytes(currentFile,original);AtomicJson(previousFile,previous);byte[] previousBytes=ReadPointerBytes(previousFile);File.WriteAllText(sentinel,"preserved user history");
+        File.Delete(new[]{old.node,old.python,Path.Combine(old.release,"openclaw","launcher.mjs")}[missing]);
+        bool incomplete=false;try {ReadRelease(currentFile,root);} catch(IncompleteReleaseException) {incomplete=true;}
+        if(!incomplete)throw new Exception("An incomplete release became launchable.");
+        int stops=0;bool stop=missing!=1;
+        PromoteRelease(next,root,stop,delegate(ActiveRelease verified) {if(!Object.ReferenceEquals(verified,next))throw new Exception("An obsolete runtime was selected for shutdown.");stops++;});
+        if(stops!=(stop?1:0) || ReadRelease(currentFile,root).version!=next.version || !ReadPointerBytes(previousFile).SequenceEqual(previousBytes) || File.ReadAllText(sentinel)!="preserved user history")throw new Exception("Incomplete-release recovery changed data, rollback or stop semantics.");
+        string[] backups=Directory.EnumerateFileSystemEntries(Child(root,"install-recovery")).ToArray();
+        if(backups.Length!=1 || !ReadPointerBytes(backups[0]).SequenceEqual(original))throw new Exception("Recovery did not preserve the exact prior pointer bytes.");
+      }
+      foreach(string problem in new[]{"malformed","outside","data","metadata","directory","release-file","runtime-parent-file","recovery-file","candidate","previous-malformed","previous-outside","stop-refused"}) {
+        string root=Child(temporary,"held-"+problem);Directory.CreateDirectory(root);
+        ActiveRelease old=FixtureRelease(root,"1.0.3"),previous=FixtureRelease(root,"1.0.2"),next=FixtureRelease(root,"1.1.2");
+        string currentFile=Child(root,"current.json"),previousFile=Child(root,"previous.json"),sentinel=Child(old.data,"history.fixture");
+        if(problem=="outside")old.node=Path.Combine(temporary,"outside.exe");
+        if(problem=="data")old.data=Path.Combine(root,"different-data");
+        if(problem=="metadata")old.payloadSha256="invalid";
+        if(problem=="directory"){File.Delete(old.node);Directory.CreateDirectory(old.node);}
+        if(problem=="release-file"){old.release=Path.Combine(root,"releases","wrong-type.fixture");File.WriteAllText(old.release,"not a directory");}
+        if(problem=="runtime-parent-file"){string parent=Path.Combine(root,"runtimes","wrong-type.fixture");File.WriteAllText(parent,"not a directory");old.node=Path.Combine(parent,"node.exe");}
+        if(problem=="recovery-file"){File.Delete(old.node);File.WriteAllText(Child(root,"install-recovery"),"not a recovery directory");}
+        if(problem=="candidate")File.Delete(next.python);
+        if(problem=="previous-outside")previous.python=Path.Combine(temporary,"outside-python.exe");
+        AtomicJson(currentFile,old);AtomicJson(previousFile,previous);File.WriteAllText(sentinel,"untouched");
+        if(problem=="malformed")File.WriteAllText(currentFile,"{ invalid json");
+        if(problem=="previous-malformed")File.WriteAllText(previousFile,"{ invalid rollback json");
+        byte[] currentBytes=ReadPointerBytes(currentFile),previousBytes=ReadPointerBytes(previousFile);int stops=0;bool held=false;
+        try {PromoteRelease(next,root,true,delegate(ActiveRelease verified){stops++;throw new InvalidOperationException("Owned stop refused.");});}catch(Exception){held=true;}
+        if(!held || stops!=(problem=="stop-refused"?1:0) || !ReadPointerBytes(currentFile).SequenceEqual(currentBytes) || !ReadPointerBytes(previousFile).SequenceEqual(previousBytes) || File.ReadAllText(sentinel)!="untouched" || Directory.Exists(Child(root,"install-recovery")))throw new Exception("Unsafe or unverified release recovery changed existing state.");
+      }
+      string ordinary=Child(temporary,"ordinary-upgrade");Directory.CreateDirectory(ordinary);
+      ActiveRelease before=FixtureRelease(ordinary,"1.0.3"),after=FixtureRelease(ordinary,"1.1.2");AtomicJson(Child(ordinary,"current.json"),before);
+      PromoteRelease(after,ordinary,true,delegate(ActiveRelease verified){if(!Object.ReferenceEquals(verified,after))throw new Exception("Upgrade shutdown did not use verified source.");});
+      if(ReadRelease(Child(ordinary,"previous.json"),ordinary).version!=before.version || Directory.Exists(Child(ordinary,"install-recovery")))throw new Exception("A complete release lost ordinary rollback behavior.");
+      byte[] rollback=ReadPointerBytes(Child(ordinary,"previous.json"));
+      PromoteRelease(after,ordinary,false,delegate(ActiveRelease verified){throw new Exception("A no-launch reinstall tried to stop work.");});
+      if(!ReadPointerBytes(Child(ordinary,"previous.json")).SequenceEqual(rollback))throw new Exception("An idempotent reinstall overwrote the healthy rollback pointer.");
+      for(int brokenCurrent=0;brokenCurrent<2;brokenCurrent++) {
+        string root=Child(temporary,"retired-rollback-"+brokenCurrent);Directory.CreateDirectory(root);
+        ActiveRelease next=FixtureRelease(root,"1.1.2"),old=brokenCurrent==1?FixtureRelease(root,"1.0.3"):next,prior=FixtureRelease(root,"1.0.2");
+        if(brokenCurrent==1)File.Delete(old.python);File.Delete(prior.node);
+        string currentFile=Child(root,"current.json"),previousFile=Child(root,"previous.json");AtomicJson(currentFile,old);AtomicJson(previousFile,prior);
+        byte[] oldRollback=ReadPointerBytes(previousFile);
+        PromoteRelease(next,root,false,delegate(ActiveRelease verified){throw new Exception("Rollback retirement tried to stop work.");});
+        string[] saved=Directory.EnumerateFileSystemEntries(Child(root,"install-recovery")).ToArray();
+        if(File.Exists(previousFile) || saved.Length!=brokenCurrent+1 || !saved.Any(file=>ReadPointerBytes(file).SequenceEqual(oldRollback)) || ReadRelease(currentFile,root).version!=next.version)throw new Exception("An incomplete rollback was not retired with its exact evidence preserved.");
+      }
     }
     static void SelfTest() {
       string root=Path.Combine(Path.GetTempPath(),"ct-installer-selftest-"+Guid.NewGuid().ToString("N"));
@@ -617,12 +765,13 @@ namespace CypherTempreInstaller {
         foreach(string browser in new[]{"","2","false","yes"}) {bool refused=false; try {ProjectRuntimeOptions(new Dictionary<string,string>(),null,browser);} catch(InvalidOperationException) {refused=true;} if(!refused) throw new Exception("An invalid owner browser preference was accepted.");}
         string atomic=Path.Combine(root,"atomic.json"); AtomicJson(atomic,new {value=1}); AtomicJson(atomic,new {value=2});
         if(!File.ReadAllText(atomic).Contains("\"value\":2")) throw new Exception("Atomic state replacement failed.");
+        ReleaseRecoverySelfTests(root);
       } finally {
         string full=Path.GetFullPath(root),temporary=Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\')+"\\";
         if(!full.StartsWith(temporary,StringComparison.OrdinalIgnoreCase) || !Path.GetFileName(full).StartsWith("ct-installer-selftest-",StringComparison.Ordinal)) throw new Exception("Temporary test cleanup root is invalid.");
         Directory.Delete(full,true);
       }
-      Log("Installer path, prefix and checksum self-tests passed.");
+      Log("Installer path, prefix, checksum and incomplete-prior recovery self-tests passed.");
     }
   }
   static class Program {

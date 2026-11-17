@@ -283,14 +283,114 @@ def run_checked(command, active, log, timeout=3600):
         raise RuntimeError('A reviewed installation check failed. See ' + str(log))
 
 
-def check_active(root, active):
-    if active.get('product') != 'cypher-tempre-chainchat' or not isinstance(active.get('version'), str):
+class IncompleteReleaseError(ValueError):
+    """An otherwise owned pointer whose application/runtime files are missing."""
+
+
+def check_active_paths(root, active):
+    if (not isinstance(active, dict) or active.get('product') != 'cypher-tempre-chainchat' or
+            not isinstance(active.get('version'), str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?', active['version']) or
+            not isinstance(active.get('payloadSha256'), str) or not re.fullmatch(r'[a-f0-9]{64}', active['payloadSha256'])):
         raise ValueError('The active installation pointer is invalid.')
     for key in ('release', 'node', 'python', 'data'):
-        beneath(root, active.get(key, ''))
-    if not Path(active['release']).is_dir() or not Path(active['node']).is_file() or not Path(active['python']).is_file():
-        raise ValueError('The selected application or runtime is unavailable.')
+        value = active.get(key)
+        if not isinstance(value, str) or not value or '\0' in value or not Path(value).is_absolute():
+            raise ValueError('The active installation pointer has an invalid path.')
+        beneath(root, value)
+    release, data = Path(active['release']), Path(active['data'])
+    if (root / 'releases').is_symlink() or release.is_symlink() or data.is_symlink() or not release.resolve().is_relative_to((root / 'releases').resolve()) or release.resolve() == (root / 'releases').resolve():
+        raise ValueError('The selected application path is invalid.')
+    if data.resolve() != (root / 'data').resolve():
+        raise ValueError('The selected data directory is invalid.')
+    launcher = release / 'openclaw/launcher.mjs'
+    beneath(root, launcher)
     return active
+
+
+def check_active(root, active):
+    check_active_paths(root, active)
+    for filename, directory in ((Path(active['release']), True), (Path(active['node']), False),
+                                (Path(active['python']), False), (Path(active['release']) / 'openclaw/launcher.mjs', False)):
+        try:
+            mode = filename.stat().st_mode
+        except (FileNotFoundError, NotADirectoryError) as failure:
+            raise IncompleteReleaseError('The selected application or runtime is unavailable.') from failure
+        if not (stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode)):
+            raise ValueError('A selected application or runtime path has the wrong file type.')
+    return active
+
+
+def read_install_pointer(filename):
+    if filename.is_symlink():
+        raise ValueError('Installation pointers cannot be symbolic links.')
+    try:
+        with open(filename, 'rb') as stream:
+            raw = stream.read(65537)
+    except FileNotFoundError:
+        return None, None
+    if len(raw) > 65536:
+        raise ValueError('An installation pointer exceeds its bounds.')
+    return json.loads(raw.decode('utf-8')), raw
+
+
+def promote_release(root, active, no_launch):
+    """Retire only structurally safe incomplete pointers, never user history.
+
+    A verified new release must already have passed its runtime checks. Older
+    executable paths are not needed to authenticate and stop this installation's
+    owned runtime: use the new, checked launcher with the same private data root.
+    """
+    check_active(root, active)
+    previous, raw = read_install_pointer(root / 'current.json')
+    rollback, rollback_raw = read_install_pointer(root / 'previous.json')
+    def prior_status(pointer, present):
+        if not present:
+            return None, False
+        try:
+            check_active(root, pointer)
+            return pointer, False
+        except IncompleteReleaseError:
+            return None, True
+    def recovery_directory():
+        recovery = root / 'install-recovery'
+        if recovery.is_symlink():
+            raise ValueError('Installation recovery records cannot be symbolic links.')
+        beneath(root, recovery)
+        try:
+            info = recovery.stat()
+        except FileNotFoundError:
+            info = None
+        if info and (not stat.S_ISDIR(info.st_mode) or os.name == 'posix' and
+                     (info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o022)):
+            raise ValueError('Installation recovery records must be a private directory owned by your user.')
+        return recovery
+    _, incomplete_current = prior_status(previous, raw is not None)
+    _, incomplete_rollback = prior_status(rollback, rollback_raw is not None)
+    if incomplete_current or incomplete_rollback:
+        recovery_directory()  # Refuse known unsafe backup paths before stopping.
+    if raw is not None and not no_launch:
+        run_checked([active['node'], Path(active['release']) / 'openclaw/launcher.mjs', '--stop'], active, root / 'install.log', 60)
+    # The authenticated shutdown can await active work. Never overwrite a local
+    # owner's changed selection or rollback record after that wait.
+    previous, current_now = read_install_pointer(root / 'current.json')
+    rollback, rollback_now = read_install_pointer(root / 'previous.json')
+    if current_now != raw or rollback_now != rollback_raw:
+        raise RuntimeError('The installation selection changed during setup. Retry after local configuration work finishes.')
+    check_active(root, active)
+    previous, incomplete_current = prior_status(previous, raw is not None)
+    _, incomplete_rollback = prior_status(rollback, rollback_raw is not None)
+    recovery = recovery_directory() if incomplete_current or incomplete_rollback else None
+    if recovery is not None:
+        recovery.mkdir(mode=0o700, exist_ok=True)
+    if incomplete_current:
+        atomic_file(recovery / ('current-' + uuid.uuid4().hex + '.json'), raw)
+        print('The previous application files are incomplete. Its installation pointer was preserved; verified setup will select the new release. Existing data is unchanged.', file=sys.stderr, flush=True)
+    if incomplete_rollback:
+        os.replace(root / 'previous.json', recovery / ('previous-' + uuid.uuid4().hex + '.json'))
+        print('The incomplete rollback pointer was preserved in installation recovery records and is no longer offered for rollback.', file=sys.stderr, flush=True)
+    if previous and previous['release'] != active['release']:
+        atomic_json(root / 'previous.json', previous)
+    atomic_json(root / 'current.json', active)
 
 
 def authenticated_status(root, active):
@@ -469,15 +569,9 @@ def install(args):
             'data': str(data), 'payloadSha256': manifest['payloadSha256']}
         setup_stage(args, 4, 'Check OpenClaw, Proof of Interaction and the installed runtime')
         run_checked([active['node'], release / 'openclaw/launcher.mjs', '--check'], active, root / 'install.log', 120)
-        current_file = root / 'current.json'
-        if current_file.exists():
-            previous = check_active(root, json.loads(current_file.read_text(encoding='utf-8')))
-            if not args.no_launch:
-                run_checked([previous['node'], Path(previous['release']) / 'openclaw/launcher.mjs', '--stop'], previous, root / 'install.log', 60)
-            if previous['release'] != active['release']: atomic_json(root / 'previous.json', previous)
+        promote_release(root, active, args.no_launch)
         # The installed front door is reviewed source from this exact payload.
         atomic_file(root / 'launcher.py', (release / 'installer/posix_install.py').read_bytes(), 0o700)
-        atomic_json(current_file, active)
         if not args.no_shortcuts: shortcuts(root, python_home / 'bin/python3')
     if not args.no_launch:
         setup_stage(args, 5, 'Start the local runtime and open your private chat')
@@ -490,7 +584,10 @@ def install(args):
 
 
 def rollback(root, quiet=False, no_launch=False):
-    selected = check_active(root, json.loads((root / 'previous.json').read_text(encoding='utf-8')))
+    selected, raw = read_install_pointer(root / 'previous.json')
+    if raw is None:
+        raise ValueError('No complete previous release is available for rollback. Installation recovery records preserve retired pointers for inspection.')
+    selected = check_active(root, selected)
     current = check_active(root, json.loads((root / 'current.json').read_text(encoding='utf-8')))
     run_checked([selected['node'], Path(selected['release']) / 'openclaw/launcher.mjs', '--check'], selected, root / 'install.log', 120)
     run_checked([current['node'], Path(current['release']) / 'openclaw/launcher.mjs', '--stop'], current, root / 'install.log', 60)

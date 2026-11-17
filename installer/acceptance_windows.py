@@ -94,6 +94,29 @@ def main():
         raise RuntimeError("An update rewrote existing chain or user data.")
     if not engine("verify").get("verified"):
         raise RuntimeError("Existing chain no longer verifies after update.")
+    # Exercise the actual installer activation callsite after all runtime checks,
+    # with a structurally owned but incomplete earlier selection. Fresh/repeat
+    # installs cannot expose this repair path. No runtime has been launched yet.
+    healthy_pointer = active_file.read_bytes()
+    previous_file = target / "previous.json"
+    healthy_rollback = b"\n" + healthy_pointer + b"\n"
+    previous_file.write_bytes(healthy_rollback)
+    retired_release = target / "releases" / "0.0.1-incomplete-acceptance"
+    retired = {**active, "version": "0.0.1", "release": str(retired_release),
+               "node": str(target / "runtimes" / "retired-node-acceptance" / "node.exe"),
+               "python": str(retired_release / ".runtime" / "python" / "python.exe")}
+    retired_pointer = b"\xef\xbb\xbf" + (json.dumps(retired, indent=2) + "\n").encode("utf-8")
+    active_file.write_bytes(retired_pointer)
+    run("repair-incomplete-prior")
+    if json.loads(active_file.read_text(encoding="utf-8")) != active:
+        raise RuntimeError("Incomplete-prior repair did not select the verified candidate.")
+    if previous_file.read_bytes() != healthy_rollback:
+        raise RuntimeError("Incomplete-prior repair overwrote a healthy rollback pointer.")
+    recovered = list((target / "install-recovery").glob("current-*.json"))
+    if len(recovered) != 1 or recovered[0].read_bytes() != retired_pointer:
+        raise RuntimeError("Incomplete-prior repair lost the exact original pointer evidence.")
+    if digest(chain_file) != before_chain or digest(sentinel) != before_sentinel or not engine("verify").get("verified"):
+        raise RuntimeError("Incomplete-prior repair changed the private fixture chain or user data.")
     active_before = active_file.read_bytes()
     probe_environment = {**environment, "CT_CHAT_NO_BROWSER": "1", "CT_CHAT_PORT": "0"}
     owner_file = target / "data/runtime-owner.json"
