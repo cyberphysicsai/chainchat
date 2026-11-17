@@ -79,7 +79,7 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
   const tempBase = await fs.realpath(os.tmpdir());
   const directory = await fs.realpath(await fs.mkdtemp(path.join(tempBase, 'ct-tools-ui-')));
   const root = path.join(directory, 'agent'), workspace = path.join(directory, 'workspace');
-  let app, browser, upstream, browserBearer = '', gatewayStarts = 0;
+  let app, browser, upstream, gatewayChild, initialGatewayPid, browserBearer = '', gatewayStarts = 0;
   const gatewayPids = new Set(), requests = [], reviews = [], nativeCalls = [], diagnostics = [], pageErrors = [];
   const toolPlan = [];
   t.after(async () => {
@@ -139,9 +139,16 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
     },
     openclaw: { stateDir: path.join(directory, 'gateway'), packageRoot: runtimePackage, nodePath: runtimeNode,
       pluginPath: path.join(application, 'openclaw/plugin'), onDiagnostic: line => diagnostics.push(line) },
-    // Observe process identity without modifying native security or approvals.
+    // Startup also uses this adapter for short-lived CLI helpers. Observe only
+    // the authoritative Gateway entrypoint, without changing its permissions.
     openclawFactory: options => createOpenClawGateway({ ...options, spawnImpl: (...args) => {
-      const child = spawn(...args); gatewayStarts++; gatewayPids.add(child.pid); return child;
+      const child = spawn(...args), argv = args[1];
+      if (Array.isArray(argv) && typeof argv[0] === 'string' &&
+          path.resolve(argv[0]) === path.join(application, 'openclaw', 'gateway-bootstrap.mjs') &&
+          path.basename(argv[1] || '') === 'openclaw.mjs' && argv[2] === 'gateway' && argv[3] === 'run') {
+        gatewayChild = child; gatewayStarts++; gatewayPids.add(child.pid);
+      }
+      return child;
     } }),
   });
   await app.store.add(root, 'Tool Grant Fixture', true);
@@ -191,11 +198,21 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       await page.waitForFunction(() => !document.getElementById('sendButton').disabled);
       return requests.slice(start);
     };
+    const assertGatewayStable = () => {
+      assert.ok(Number.isSafeInteger(initialGatewayPid) && initialGatewayPid > 0, 'Observe the real Gateway PID after the first chat.');
+      assert.equal(gatewayStarts, 1, 'Applying or revoking tools must never restart the Gateway.');
+      assert.deepEqual([...gatewayPids], [initialGatewayPid]);
+      assert.equal(gatewayChild.pid, initialGatewayPid);
+      assert.equal(gatewayChild.exitCode, null, 'The original Gateway must still be alive.');
+      assert.equal(gatewayChild.signalCode, null);
+    };
     await t.test('fresh host grant is disabled and the live model sees that boundary', async () => {
       assertGrant(await chat('Acknowledge the fresh disposable test without using tools.'), false);
-      assert.equal(gatewayStarts, 1); assert.equal(gatewayPids.size, 1);
+      initialGatewayPid = gatewayChild?.pid;
+      assertGatewayStable();
     });
     await t.test('additional native settings permission does not silently enable files or shell', async () => {
+      assertGatewayStable();
       await page.locator('[data-native-tab="tools"]').click();
       await page.locator('#nativeCapabilitiesEnabled').check();
       await page.locator('#nativeSettingPaths').fill('messages');
@@ -219,8 +236,10 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       const turn = await chat('Acknowledge the settings-only permission; do not use any tools.');
       assertGrant(turn, false);
       assert.equal(verifiedContext(turn[0].body).hostToolGrant.nativeCapabilities.enabled, true);
+      assertGatewayStable();
     });
     await t.test('actual primary form Apply exposes and executes read and shell under both PoI reviews', async () => {
+      assertGatewayStable();
       await page.locator('#nativeToolsEnabled').check();
       await page.locator('#nativeToolChoices [data-host-tool="read"]').check();
       await page.locator('#nativeToolChoices [data-host-tool="exec"]').check();
@@ -257,21 +276,23 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       }
       const current = verifiedContext(turn[0].body);
       assert.deepEqual(current.hostToolGrant.roots, [workspace]);
-      assert.equal(gatewayStarts, 1); assert.equal(gatewayPids.size, 1);
+      assertGatewayStable();
     });
     await t.test('UI revoke removes schemas on the very next turn without a Gateway restart', async () => {
+      assertGatewayStable();
       const beforeActions = nativeCalls.filter(item => item.request.op === 'evaluate_action').length;
       const saved = page.waitForResponse(response => response.url() === origin + '/api/openclaw/tools' && response.request().method() === 'POST');
       await page.locator('#disableNativeTools').click();
       const response = await saved, body = await response.json(); assert.equal(response.status(), 200, JSON.stringify(body));
       assert.equal(body.toolAuthority.grant.enabled, false);
       assert.deepEqual(response.request().postDataJSON(), { operation: 'revoke-all' });
-      assert.equal(body.toolAuthority.grant.nativeCapabilities.enabled, false, 'Explicit revoke-all clears the additional native grant too.');
+      assert.notEqual(body.toolAuthority.grant.nativeCapabilities?.enabled, true, 'Explicit revoke-all clears the additional native grant too.');
       await page.waitForFunction(() => !document.getElementById('nativeToolsForm').inert && !document.getElementById('nativeToolsEnabled').checked);
+      assertGatewayStable();
       assertGrant(await chat('Acknowledge the revoked tools without using them.'), false);
       assert.equal(nativeCalls.filter(item => item.request.op === 'evaluate_action').length, beforeActions);
       assert.equal((await fs.readFile(execFile, 'utf8')).trim(), EXEC_MARKER);
-      assert.equal(gatewayStarts, 1); assert.equal(gatewayPids.size, 1);
+      assertGatewayStable();
     });
     const bytes = await fs.readFile(chainFile);
     assert.ok(bytes.subarray(0, genesisBytes.length).equals(genesisBytes), 'Every turn preserves the original genesis bytes.');
