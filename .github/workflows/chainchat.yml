@@ -93,6 +93,11 @@ jobs:
           assert not Path("openclaw/runtime/node_modules").exists()
           audit=json.loads((output/"audit.json").read_text())
           assert isinstance(audit.get("vulnerabilities"),dict) and isinstance(audit.get("metadata",{}).get("vulnerabilities"),dict),audit.get("error")
+          summaries=[]
+          for name,row in sorted(audit["vulnerabilities"].items()):
+              details=[{key:item.get(key) for key in ["source","name","title","url","severity","range"]} if isinstance(item,dict) else item for item in row.get("via",[])]
+              summaries.append({"name":name,"severity":row["severity"],"isDirect":row["isDirect"],"range":row["range"],"nodes":row["nodes"],"via":details,"fixAvailable":row["fixAvailable"]})
+          print("CT_LOCK_AUDIT_DETAILS="+json.dumps(summaries))
           report={"version":1,"sourceCommit":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),
                   "targetOpenClaw":"2026.11.4","officialIntegrity":expected_sri,"officialReleaseCommit":expected_commit,
                   "registryHosts":sorted(hosts),"lockPackageEntries":len(lock["packages"]),"lockSha256":hashlib.sha256(lockfile.read_bytes()).hexdigest(),
