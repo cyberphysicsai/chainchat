@@ -10,12 +10,17 @@ on:
         description: 'Full release acceptance or focused native diagnosis'
         type: choice
         default: full
-        options: [full, byok-reliability, native-settings, live-deepseek]
+        options: [full, byok-reliability, native-settings, tool-grants, live-deepseek]
 permissions:
   contents: read
 jobs:
   chat:
     if: github.event_name != 'workflow_dispatch' || inputs.suite != 'live-deepseek'
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.suite != 'full' && '[{"shard":0,"name":"chat"}]' || '[{"shard":0,"name":"chat"},{"shard":1,"name":"chat shard 2"},{"shard":2,"name":"chat shard 3"},{"shard":3,"name":"chat shard 4"}]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,17 +109,56 @@ jobs:
       - name: Run focused native diagnosis or the complete release suite
         env:
           CT_CI_SUITE: ${{ inputs.suite }}
+          CT_CI_SHARD: ${{ matrix.shard }}
+          CT_CI_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
           if [[ "$CT_CI_SUITE" == "byok-reliability" ]]; then
             node --test test/openclaw-reliability.integration.test.mjs
+          elif [[ "$CT_CI_SUITE" == "tool-grants" ]]; then
+            node --test test/openclaw-tools-ui.integration.test.mjs test/tool-authority.test.mjs test/host-process-context.test.mjs test/chat-tools-ui.test.mjs test/native-settings-integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "native-settings" ]]; then
             node --test test/openclaw-native-controls.integration.test.mjs test/native-channel-routes.test.mjs test/native-settings-integration.test.mjs test/native-config-form.test.mjs test/native-settings-browser.test.mjs test/managed-browser-service.test.mjs test/tool-authority.test.mjs test/chat-errors.test.mjs
           else
-            python -m unittest discover -s test -p test_*.py
-            node --test --test-concurrency=1 test/*.test.mjs
+            if [[ "$CT_CI_SHARD" == "0" ]]; then
+              python -m unittest discover -s test -p test_*.py
+            fi
+            # Every full-suite file belongs to exactly one independent runner.
+            # Keep native Gateways serial within each runner to avoid memory
+            # pressure or changing the isolated runtime admission boundaries.
+            node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { createHash } from 'node:crypto';
+          import { execFileSync, spawnSync } from 'node:child_process';
+          const shard = Number(process.env.CT_CI_SHARD), shards = 4;
+          if (!Number.isSafeInteger(shard) || shard < 0 || shard >= shards) throw new Error('Invalid CI test shard.');
+          const allFiles = fs.readdirSync('test', { withFileTypes: true })
+            .filter(entry => entry.isFile() && entry.name.endsWith('.test.mjs'))
+            .map(entry => `test/${entry.name}`).sort();
+          const files = allFiles.filter((_file, index) => index % shards === shard);
+          if (!allFiles.length || !files.length) throw new Error('The CI test partition is empty.');
+          const source = process.env.CT_CI_SOURCE_SHA;
+          const checkoutTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+          if (![source, checkoutTree].every(value => /^[a-f0-9]{40}$/u.test(value || ''))) throw new Error('Invalid CI source identity.');
+          const manifest = { version: 1, source, checkoutTree, index: shard, count: shards, totalFiles: allFiles.length,
+            allFilesSha256: createHash('sha256').update(allFiles.join('\n') + '\n', 'utf8').digest('hex'), files };
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, `chainchat-node-manifest-${shard}.json`), JSON.stringify(manifest, null, 2) + '\n');
+          console.log(`CT_TEST_SHARD_MANIFEST=${JSON.stringify(manifest)}`);
+          const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...files], { stdio: 'inherit' });
+          if (result.error) throw result.error;
+          console.log(`CHAINCHAT_NODE_SHARD_EXIT=${JSON.stringify({ shard, status: result.status, signal: result.signal })}`);
+          process.exitCode = result.status ?? 1;
+          NODE
           fi
+      - name: Keep the exhaustive full-suite shard manifest
+        if: always() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'full')
+        uses: actions/upload-artifact@v4
+        with:
+          name: chainchat-node-shard-${{ matrix.shard }}
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/chainchat-node-manifest-${{ matrix.shard }}.json
       - name: Remove the temporary CI browser namespace exception
         if: always() && steps.browser_sandbox.outputs.installed == 'true'
         shell: bash

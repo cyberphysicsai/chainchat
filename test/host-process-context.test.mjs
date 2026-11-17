@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { projectHostProcessContext, validateHostProcessContext } from '../lib/host-process-context.mjs';
+import { projectHostProcessContext, validateHostProcessContext, externalToolNamesForGrant } from '../lib/host-process-context.mjs';
 
 export const preparedFixture = () => ({
   genesis: { hash: 'a'.repeat(64) }, head: { hash: 'b'.repeat(64) }, runtime: { mode: 'active' },
@@ -15,6 +15,19 @@ export const preparedFixture = () => ({
 });
 const facts = prepared => projectHostProcessContext(prepared, { active: true, externalTools: ['read'], expectedHead: 'b'.repeat(64), expectedGenesis: 'a'.repeat(64) });
 const held = action => assert.throws(action, { code: 'GATE_INVALID_AGENT_CONTEXT' });
+
+test('current tool names combine independent host and native grants without turning settings into tools', () => {
+  const native = { enabled: true, acknowledged: true, tools: ['sessions_list'], settings: ['*'] };
+  assert.deepEqual(externalToolNamesForGrant({ enabled: false, tools: ['exec'], nativeCapabilities: native }), ['sessions_list']);
+  assert.deepEqual(externalToolNamesForGrant({ enabled: true, tools: ['read', 'browser'], networkHosts: [], nativeCapabilities: native }), ['read', 'sessions_list']);
+  assert.deepEqual(externalToolNamesForGrant({ enabled: true, tools: ['browser'], networkHosts: ['example.com'] }), ['browser']);
+  assert.deepEqual(externalToolNamesForGrant({ enabled: false, nativeCapabilities: { ...native, tools: [] } }), [], 'All-settings permission does not grant action tools.');
+  for (const value of [null, undefined, {}, { enabled: false, tools: ['exec'] },
+    { nativeCapabilities: { ...native, acknowledged: false } }, { nativeCapabilities: { ...native, enabled: false } }])
+    assert.deepEqual(externalToolNamesForGrant(value), []);
+  held(() => externalToolNamesForGrant({ enabled: true, tools: ['read', 'read'] }));
+  held(() => externalToolNamesForGrant({ enabled: true, tools: 'exec' }));
+});
 
 test('host process facts project actual complete receipts without outputs, descriptions, paths or grants', () => {
   const prepared = preparedFixture(), before = structuredClone(prepared);
@@ -60,7 +73,8 @@ test('preparation/head identity mismatch, partial receipts and false completion 
 test('paused current invocation projects only verified read-only processing facts, with tools and goals empty', () => {
   const prepared = preparedFixture(); prepared.runtime = { mode: 'dormant', learning: false };
   const options = { active: true, memoryPaused: true, expectedHead: prepared.head.hash, expectedGenesis: prepared.genesis.hash,
-    externalTools: ['exec'], ownSessionTools: ['get_goal'] };
+    externalTools: externalToolNamesForGrant({ enabled: true, tools: ['exec'], nativeCapabilities: {
+      enabled: true, acknowledged: true, tools: ['sessions_list'], settings: [] } }), ownSessionTools: ['get_goal'] };
   const projected = projectHostProcessContext(prepared, options);
   assert.deepEqual(projected.toolScope, { external: [], ownSession: [] });
   assert.deepEqual(projected.releaseReview, { semantic: true, native: true });

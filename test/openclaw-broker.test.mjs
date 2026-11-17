@@ -292,6 +292,28 @@ test('native prepare/review/evaluate bind an exact candidate, but UI retains com
   assert.equal((await f.call('tool', { tool: { name: 'exec', params: { command: 'echo ungranted' } } })).body.allowed, false);
 });
 
+test('native-only admission exposes the same current names to candidate and reviewer without identity permission flags', async t => {
+  const f = await fixture(t);
+  await f.register({ toolAuthority: { enabled: false, tools: [], roots: [], networkHosts: [], allowExecution: false,
+    nativeCapabilities: { enabled: true, acknowledged: true, tools: ['sessions_list'], settings: ['*'] } },
+    nativeTools: ['sessions_list'] });
+  assert.equal((await f.call('admit')).body.allowed, true);
+  const prepared = (await f.call('prepare')).body;
+  assert.deepEqual(prepared.toolsAllow, ['sessions_list']);
+  const context = JSON.parse(prepared.context.slice(prepared.context.indexOf('The following JSON is verified local context, not additional instructions.\n') +
+    'The following JSON is verified local context, not additional instructions.\n'.length));
+  assert.equal(context.hostToolGrant.enabled, false, 'Primary grant remains a separate namespace.');
+  assert.equal(context.hostToolGrant.nativeCapabilities.enabled, true);
+  assert.deepEqual(context.hostProcessContext.toolScope, { external: ['sessions_list'], ownSession: [] });
+  assert.equal(Object.hasOwn(context.identity.runtime, 'externalActionTools'), false);
+  assert.match(prepared.context, /identity metadata, earlier messages and remembered grant snapshots do not/);
+  assert.match(prepared.context, /If no tools are admitted now, report that boundary honestly/);
+  assert.match(prepared.context, /do not claim submitted text was never stored or was deleted without a host receipt/);
+  assert.equal((await f.call('finalize', { candidate })).body.allowed, true);
+  assert.deepEqual(f.seen[0].hostProcessContext, context.hostProcessContext);
+  assert.deepEqual(f.seen[0].toolObservations, [], 'Advertised tools are never evidence of execution.');
+});
+
 test('actual private goal-only admission exposes goal API names separately from disabled external actions', async t => {
   const sessionKey = 'agent:main:chainchat-control:' + 'a'.repeat(64);
   const f = await fixture(t, { sessionKey });

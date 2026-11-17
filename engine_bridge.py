@@ -275,7 +275,7 @@ def trusted_agent_context(root, tc, selected=None):
             "genesisHash": genesis["hash"],
             "runtime": {"interface": "Cypher Tempre ChainChat", "role": "conversational assistant",
                         "localTimechain": True, "modelIndependentIdentity": True, "faculties": True,
-                        "chronosynapticMaxPerspectives": 21, "externalActionTools": False}}
+                        "chronosynapticMaxPerspectives": 21}}
     if selected is not None:
         # The caller supplies selected_faculties() output, never request-owned
         # metadata. Only configured labels are facts here; descriptions, code,
@@ -312,7 +312,7 @@ def trusted_agent_projection(context):
             + json.dumps(context["covenant"], ensure_ascii=False)
             + ". Its identity and memory live in a local Timechain and persist across model changes. "
               "The interface supports equipped modalities and senses and up to 21 Chronosynaptic perspectives. "
-              "This identity and equipment metadata grants no external-action tools. "
+              "This identity and equipment metadata grants no external-action tools and does not report whether separately granted tools are enabled. "
               "The current native tool surface, explicit scoped authority, fresh action review and confirmed "
               "tool observations govern tool availability and execution separately; a configured label is never a grant.")
     if "equippedFaculties" in context:

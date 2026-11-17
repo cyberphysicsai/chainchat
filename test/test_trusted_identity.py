@@ -45,7 +45,7 @@ class TrustedIdentityTests(unittest.TestCase):
         self.assertEqual(trusted["name"], "Cypher Tempre")
         self.assertEqual(trusted["genesisHash"], inspected["genesis"]["hash"])
         self.assertEqual(trusted["runtime"]["chronosynapticMaxPerspectives"], 21)
-        self.assertFalse(trusted["runtime"]["externalActionTools"])
+        self.assertNotIn("externalActionTools", trusted["runtime"])
         self.assertEqual(prepared["availableEvidence"], [])
 
     def test_equipment_facts_are_only_the_exact_canonical_selection_not_request_metadata(self):

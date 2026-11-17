@@ -936,7 +936,7 @@ const verifiedAgentFixture = () => ({
   runtime: {
     interface: "Cypher Tempre ChainChat", role: "conversational assistant",
     localTimechain: true, modelIndependentIdentity: true, faculties: true,
-    chronosynapticMaxPerspectives: 21, externalActionTools: false,
+    chronosynapticMaxPerspectives: 21,
   },
 });
 const verifiedProcessFixture = () => {
@@ -967,6 +967,35 @@ test('the independent reviewer receives narrowly bound current host processing a
   assert.match(frame.content, /not that this candidate has passed/);
   assert.match(frame.content, /never promises that every visible pending answer has already been committed/);
   assert.match(frame.content, /no historical ring credit, permission, approval or outside truth/);
+});
+
+test('new and legacy identity metadata never contradict or grant current tool availability', async t => {
+  const mock = await localProvider(t, (_req, res) => respond(res, {
+    choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(goodReview()) } }],
+  }));
+  const config = { provider: 'compatible', model: 'fixture', baseUrl: mock.baseUrl };
+  const context = verifiedProcessFixture();
+  context.hostProcessContext.toolScope.external = ['read'];
+  for (const legacy of [false, true]) {
+    const identity = structuredClone(context.trustedAgentContext);
+    if (legacy) identity.runtime.externalActionTools = false;
+    const original = structuredClone(identity);
+    assert.equal((await review(config, { input: 'Can you request read?', candidate: 'Read is admitted; it has not executed.',
+      covenant: [...FRUITS], ...context, trustedAgentContext: identity })).approved, true);
+    const [frame, message] = mock.requests.at(-1).body.messages, payload = JSON.parse(message.content);
+    assert.equal(Object.hasOwn(payload.trustedAgentContext.runtime, 'externalActionTools'), false);
+    assert.deepEqual(payload.hostProcessContext.toolScope.external, ['read']);
+    assert.match(frame.content, /Identity metadata, remembered grants and a model's self-description are not live tool-status reports/);
+    assert.deepEqual(identity, original, 'Canonicalizing legacy metadata must not mutate its source.');
+  }
+  const sent = mock.requests.length;
+  for (const value of [true, null, 'false', undefined]) {
+    const identity = structuredClone(context.trustedAgentContext);
+    identity.runtime.externalActionTools = value;
+    await assert.rejects(review(config, { input: 'Hello', candidate: 'Hello', covenant: [...FRUITS],
+      ...context, trustedAgentContext: identity }), { code: 'GATE_INVALID_AGENT_CONTEXT' });
+  }
+  assert.equal(mock.requests.length, sent, 'Forged permission flags are rejected before transport.');
 });
 
 test('invalid, injected or credential-bearing host process facts are held before review transmission', async t => {

@@ -109,7 +109,7 @@ test("fresh-chain introductions use verified identity in generation, review and 
   assert.equal(f.reviewed.length, 1);
   const context = f.reviewed[0].args.trustedAgentContext;
   assert.equal(context.name, "Cognition Fixture");
-  assert.equal(context.runtime.externalActionTools, false);
+  assert.equal(Object.hasOwn(context.runtime, 'externalActionTools'), false, 'Identity metadata cannot masquerade as current tool status.');
   assert.equal(context.genesisHash, before.hash);
   const process = f.reviewed[0].args.hostProcessContext;
   assert.equal(process.genesisHash, context.genesisHash);
