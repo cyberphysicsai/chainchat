@@ -208,6 +208,14 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       assert.deepEqual(body.toolAuthority.grant.nativeCapabilities.tools, []);
       await page.waitForFunction(() => !document.getElementById('nativeCapabilitiesEnabled').disabled);
       assert.match(await page.locator('#nativeCapabilityStatus').textContent(), /separate|does not enable/i);
+      const primaryOff = page.waitForResponse(response => response.url() === origin + '/api/openclaw/tools' && response.request().method() === 'POST');
+      await page.locator('#nativeToolsForm button[type="submit"]').click();
+      const offResponse = await primaryOff, offBody = await offResponse.json();
+      assert.equal(offResponse.status(), 200, JSON.stringify(offBody));
+      assert.equal(offResponse.request().postDataJSON().operation, 'save');
+      assert.equal(offBody.toolAuthority.grant.enabled, false);
+      assert.equal(offBody.toolAuthority.grant.nativeCapabilities.enabled, true, 'Applying the disabled primary form preserves the saved native settings grant.');
+      await page.waitForFunction(() => !document.getElementById('nativeToolsForm').inert && document.getElementById('nativeCapabilitiesEnabled').checked);
       const turn = await chat('Acknowledge the settings-only permission; do not use any tools.');
       assertGrant(turn, false);
       assert.equal(verifiedContext(turn[0].body).hostToolGrant.nativeCapabilities.enabled, true);
@@ -257,6 +265,8 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       await page.locator('#disableNativeTools').click();
       const response = await saved, body = await response.json(); assert.equal(response.status(), 200, JSON.stringify(body));
       assert.equal(body.toolAuthority.grant.enabled, false);
+      assert.deepEqual(response.request().postDataJSON(), { operation: 'revoke-all' });
+      assert.equal(body.toolAuthority.grant.nativeCapabilities.enabled, false, 'Explicit revoke-all clears the additional native grant too.');
       await page.waitForFunction(() => !document.getElementById('nativeToolsForm').inert && !document.getElementById('nativeToolsEnabled').checked);
       assertGrant(await chat('Acknowledge the revoked tools without using them.'), false);
       assert.equal(nativeCalls.filter(item => item.request.op === 'evaluate_action').length, beforeActions);

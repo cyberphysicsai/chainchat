@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { createApp, strictReview } from "../server.mjs";
 import { FRUITS, DIMENSIONS } from "../lib/providers.mjs";
 import { StateStore } from "../lib/state.mjs";
+import { ToolPermissions } from "../lib/tool-permissions.mjs";
 import { connectLocalSession } from "../public/local-session.js";
 import { engine as nativeEngine } from "../lib/engine.mjs";
 
@@ -467,6 +468,103 @@ test('review receives current native-only tools on the next turn without mistaki
     assert.match(current.args.system, /persistence can occur without a model filesystem call/);
   }
   assert.equal(f.modelCalls.length, 0, 'Only the fake OpenClaw adapter ran.');
+});
+
+const nativePermissionGrant = () => ({ enabled: true, acknowledged: true, tools: ['sessions_list'], settings: [], delegatedRuns: false, backgroundRuns: false });
+function permissionManager(generated = []) {
+  return { start: async () => {}, close: async () => {}, status: () => ({ backend: 'openclaw', version: 'fixture', running: true }),
+    describeControls: async () => ({}), executeCommand: async () => ({}),
+    toolCatalogue: async () => ({ tools: [{ name: 'sessions_list' }] }),
+    sessionControls: async () => ({ sessionKey: 'permissions', goal: null }),
+    generate: async (_config, args, context) => { generated.push({ args, context }); return { text: 'A helpful and truthful answer.', usage: {} }; } };
+}
+
+test('explicit primary-off save preserves native grants while explicit and legacy all-revocation clear both', async t => {
+  const generated = [], f = await fixture(t, { openclawFactory: () => permissionManager(generated) }); await f.ready();
+  const read = async () => (await f.request('/api/openclaw/native-capabilities')).body.toolAuthority;
+  assert.deepEqual((await read()).operations, ['save', 'revoke-all']);
+  const native = await f.request('/api/openclaw/native-capabilities', nativePermissionGrant());
+  assert.equal(native.status, 200); assert.deepEqual(native.body.toolAuthority.operations, ['save', 'revoke-all']);
+  const disabled = await f.request('/api/openclaw/tools', { operation: 'save', enabled: false, tools: [], roots: [], networkHosts: [],
+    allowExecution: false, acknowledged: false });
+  assert.equal(disabled.status, 200, JSON.stringify(disabled.body));
+  assert.equal(disabled.body.toolAuthority.grant.enabled, false);
+  assert.deepEqual(disabled.body.toolAuthority.grant.nativeCapabilities, nativePermissionGrant());
+  assert.notEqual(disabled.body.toolAuthority.revision, native.body.toolAuthority.revision);
+  const file = path.join(f.dataDir, 'tool-permissions.json'), before = await fs.readFile(file, 'utf8');
+  assert.equal(before.includes('operations'), false, 'Interface operation metadata must never be persisted as authority.');
+  for (const invalid of [
+    { operation: null, enabled: false }, { operation: 'unknown', enabled: false },
+    { operation: 'revoke-all', enabled: false }, { operation: 'save', enabled: false, operations: ['save'] },
+  ]) {
+    assert.equal((await f.request('/api/openclaw/tools', invalid)).status, 403);
+    assert.equal(await fs.readFile(file, 'utf8'), before, 'Malformed operations cannot mutate permission state.');
+  }
+  const revoked = await f.request('/api/openclaw/tools', { operation: 'revoke-all' });
+  assert.equal(revoked.status, 200); assert.equal(revoked.body.toolAuthority.grant.enabled, false);
+  assert.equal(revoked.body.toolAuthority.grant.nativeCapabilities, undefined);
+  assert.deepEqual((await read()).grant, revoked.body.toolAuthority.grant);
+  assert.notEqual(revoked.body.toolAuthority.revision, disabled.body.toolAuthority.revision);
+  assert.equal((await f.request('/api/openclaw/native-capabilities', nativePermissionGrant())).status, 200);
+  const legacy = await f.request('/api/openclaw/tools', { enabled: false });
+  assert.equal(legacy.status, 200); assert.equal(legacy.body.toolAuthority.grant.nativeCapabilities, undefined,
+    'Old clients retain their original full-revocation behavior.');
+  assert.equal(generated.length, 0); assert.equal(f.modelCalls.length, 0);
+});
+
+for (const order of ['save-native', 'native-then-revoke', 'revoke-then-native'])
+test(`permission endpoint transactions do not lose scopes or resurrect revoked grants: ${order}`, { timeout: 15000 }, async t => {
+  const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+  const validating = deferred(), release = deferred(), nativeQueued = deferred(), revokeQueued = deferred();
+  t.after(() => release.resolve());
+  const generated = [], f = await fixture(t, { openclawFactory: () => permissionManager(generated) }); await f.ready();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ct-concurrent-permissions-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const host = { operation: 'save', enabled: true, acknowledged: true, tools: ['read'], roots: [root], networkHosts: [], allowExecution: false };
+  const initial = await f.request('/api/openclaw/tools', host); assert.equal(initial.status, 200);
+  assert.equal((await f.request('/api/chat', { message: 'Hello.' })).status, 200);
+  const oldAuthorization = generated.at(-1).context.authorize; await oldAuthorization();
+  let armed = true, updates = 0;
+  const realpath = fs.realpath, update = ToolPermissions.prototype.update, revoke = ToolPermissions.prototype.disableRecord;
+  t.mock.method(fs, 'realpath', async (...args) => {
+    if (armed && args[0] === root) { armed = false; validating.resolve(); await release.promise; }
+    return realpath(...args);
+  });
+  t.mock.method(ToolPermissions.prototype, 'update', function (...args) {
+    if (++updates === 2) nativeQueued.resolve();
+    return update.apply(this, args);
+  });
+  t.mock.method(ToolPermissions.prototype, 'disableRecord', function (...args) {
+    revokeQueued.resolve(); return revoke.apply(this, args);
+  });
+  const primarySave = f.request('/api/openclaw/tools', { ...host, tools: ['read', 'write'] });
+  await validating.promise; // Hold actual asynchronous filesystem validation, not a mocked endpoint.
+  let nativeSave, allRevoke;
+  if (order === 'revoke-then-native') {
+    allRevoke = f.request('/api/openclaw/tools', { operation: 'revoke-all' }); await revokeQueued.promise;
+    nativeSave = f.request('/api/openclaw/native-capabilities', nativePermissionGrant()); await nativeQueued.promise;
+  } else {
+    nativeSave = f.request('/api/openclaw/native-capabilities', nativePermissionGrant()); await nativeQueued.promise;
+    if (order === 'native-then-revoke') { allRevoke = f.request('/api/openclaw/tools', { operation: 'revoke-all' }); await revokeQueued.promise; }
+  }
+  release.resolve();
+  const results = await Promise.all([primarySave, nativeSave, ...(allRevoke ? [allRevoke] : [])]);
+  for (const result of results) assert.equal(result.status, 200, JSON.stringify(result.body));
+  const readback = await f.request('/api/openclaw/native-capabilities'), final = readback.body.toolAuthority;
+  assert.equal(readback.status, 200);
+  assert.equal(new Set(results.map(result => result.body.toolAuthority.revision)).size, results.length);
+  assert.ok(results.every(result => result.body.toolAuthority.revision !== initial.body.toolAuthority.revision));
+  await assert.rejects(oldAuthorization(), { code: 'TOOL_AUTHORITY_CHANGED' }, 'Every saved scope invalidates an earlier invocation.');
+  if (order === 'save-native') {
+    assert.equal(final.grant.enabled, true); assert.deepEqual(final.grant.tools, ['read', 'write']);
+    assert.deepEqual(final.grant.nativeCapabilities, nativePermissionGrant());
+  } else if (order === 'native-then-revoke') {
+    assert.equal(final.grant.enabled, false); assert.equal(final.grant.nativeCapabilities, undefined);
+  } else {
+    assert.equal(final.grant.enabled, false); assert.deepEqual(final.grant.tools, []);
+    assert.deepEqual(final.grant.nativeCapabilities, nativePermissionGrant(), 'A later explicit native save cannot revive the revoked primary scope.');
+  }
+  assert.deepEqual(Object.values(JSON.parse(await fs.readFile(path.join(f.dataDir, 'tool-permissions.json'), 'utf8')).agents)[0].grant, final.grant);
 });
 
 test('new Browser grants without hosts are refused without replacing the current grant, and revocation still works', async t => {

@@ -2587,18 +2587,28 @@ export async function createApp(options = {}) {
             const identity = await nativeControlIdentity(session, true);
             const catalogue = await nativeCatalogueFor(identity);
             const capabilities = validateNativeCapabilities(input, {toolNames: catalogue.map(tool => tool.name)});
-            const previous = toolPermissions.get(authorityKey(identity)).grant;
-            const grant = await validateToolAuthority({...previous, nativeCapabilities: capabilities}, {
-              protectedRoots: protectedToolRoots(), managedBrowser: !!browserService,
-              pluginTools: trustedPlugins ? (await trustedPlugins.toolCatalogue({identity})).map(tool => tool.name) : [],
-              nativeTools: catalogue.map(tool => tool.name),
+            const pluginTools = trustedPlugins ? (await trustedPlugins.toolCatalogue({identity})).map(tool => tool.name) : [];
+            const saved = await toolPermissions.update(authorityKey(identity), async previous => {
+              await requireLocalAccess();
+              const grant = await validateToolAuthority({...previous.grant, nativeCapabilities: capabilities}, {
+                protectedRoots: protectedToolRoots(), managedBrowser: !!browserService,
+                pluginTools, nativeTools: catalogue.map(tool => tool.name),
+              });
+              await requireLocalAccess();
+              return grant;
             });
-            const saved = await toolPermissions.set(authorityKey(identity), grant);
             cancelAgent(identity.record);
             return send(200, {toolAuthority: saved, catalogue});
           }
           if (url.pathname === "/api/openclaw/tools") {
-            if (input.enabled === false) {
+            const {operation, ...requested} = input;
+            if (Object.hasOwn(input, 'operation') && !['save', 'revoke-all'].includes(operation))
+              throw err('Choose save or revoke-all for tool permissions.', 'HOST_TOOL_DENIED', 403);
+            if (operation === 'revoke-all' && Object.keys(requested).length)
+              throw err('Revoke-all accepts only its explicit operation.', 'HOST_TOOL_DENIED', 403);
+            // Preserve legacy clients' full revocation. Current forms name the
+            // save operation so disabling primary tools keeps native grants.
+            if (operation === 'revoke-all' || operation === undefined && requested.enabled === false) {
               const record = agentFor(session);
               const saved = await toolPermissions.disableRecord(record.id);
               cancelAgent(record);
@@ -2607,14 +2617,17 @@ export async function createApp(options = {}) {
               return send(200, { toolAuthority: saved });
             }
             const identity = await nativeControlIdentity(session, true);
-            if (input.enabled !== false) await requireLocalAccess();
+            await requireLocalAccess();
             const pluginTools = trustedPlugins ? await trustedPlugins.toolCatalogue({ identity }) : [];
             const nativeTools = (await nativeCatalogueFor(identity)).map(tool => tool.name);
-            const current = toolPermissions.get(authorityKey(identity)).grant;
-            const grant = await validateToolAuthority({...input,
-              ...(!Object.hasOwn(input, 'nativeCapabilities') && current.nativeCapabilities ? {nativeCapabilities: current.nativeCapabilities} : {})},
-              { protectedRoots: protectedToolRoots(), managedBrowser: !!browserService, requireBrowserHosts: true, pluginTools: pluginTools.map(tool => tool.name), nativeTools });
-            const saved = await toolPermissions.set(authorityKey(identity), grant);
+            const saved = await toolPermissions.update(authorityKey(identity), async current => {
+              await requireLocalAccess();
+              const grant = await validateToolAuthority({...requested,
+                ...(!Object.hasOwn(requested, 'nativeCapabilities') && current.grant.nativeCapabilities ? {nativeCapabilities: current.grant.nativeCapabilities} : {})},
+                { protectedRoots: protectedToolRoots(), managedBrowser: !!browserService, requireBrowserHosts: true, pluginTools: pluginTools.map(tool => tool.name), nativeTools });
+              await requireLocalAccess();
+              return grant;
+            });
             cancelAgent(identity.record);
             await browserService?.revoke(identity);
             return send(200, { toolAuthority: saved });

@@ -51,7 +51,7 @@ function documentFixture() {
 const snapshot = (revision = 'r1') => ({ runtime: { version: '2026.11.3' }, selectedAgentId: 'agent-a', sessionKey: 'agent:main:test', commands: [],
   schema: { schema: { type: 'object', $defs: { retries: { type: 'integer', minimum: 0 } }, properties: { agents: { type: 'object', properties: { defaults: { type: 'object', properties: { maxRetries: { $ref: '#/$defs/retries' } } } } } } }, uiHints: { 'agents.defaults.maxRetries': { label: 'Retries from the exact native schema' } } },
   config: { revision, baseHash: `hash-${revision}`, editable: {}, effective: { agents: { defaults: { maxRetries: 2 } } }, immutablePaths: ['gateway'], guards: { gateway: 'Private transport.' } },
-  nativeConfig: { config: { agents: { defaults: { maxRetries: 2 } } }, hash: `hash-${revision}` }, services: { jobs: [], channels: [], occurrences: [] }, toolAuthority: { grant: {} } });
+  nativeConfig: { config: { agents: { defaults: { maxRetries: 2 } } }, hash: `hash-${revision}` }, services: { jobs: [], channels: [], occurrences: [] }, toolAuthority: { operations: ['save', 'revoke-all'], grant: {} } });
 const settle = async () => { for (let count = 0; count < 12; count++) await new Promise(resolve => setImmediate(resolve)); };
 function fixture({ save = async () => ({}), saveTools = async () => ({}), saveNativeCapabilities = async () => ({}), channels = { items: [] }, initial = snapshot() } = {}) {
   const doc = documentFixture(), calls = []; let current = initial, connected = true;
@@ -77,7 +77,7 @@ function textareaSnapshot() {
 test('native textarea settings do not strand grants or channel loading on the first snapshot or reload', async () => {
   const next = textareaSnapshot();
   next.toolCatalogue = [{ name: 'browser', available: true }];
-  next.toolAuthority = { grant: { enabled: true, acknowledged: true, tools: ['browser'], networkHosts: ['example.com'] } };
+  next.toolAuthority = { ...next.toolAuthority, grant: { enabled: true, acknowledged: true, tools: ['browser'], networkHosts: ['example.com'] } };
   const f = fixture({ initial: next }); await settle();
   assert.equal(f.get('nativeError').textContent, '');
   assert.equal(f.get('nativeConnectedControls').disabled, false);
@@ -104,7 +104,7 @@ test('a settings renderer failure holds config writes while independent permissi
   await f.get('saveNativeConfig').fire('click');
   assert.equal(f.calls.some(([route]) => route === '/api/openclaw/config'), false);
   await f.get('disableNativeTools').fire('click'); await settle();
-  assert.deepEqual(f.calls.find(([route]) => route === '/api/openclaw/tools')?.[1], { enabled: false, tools: [], roots: [], networkHosts: [], allowExecution: false, acknowledged: false });
+  assert.deepEqual(f.calls.find(([route]) => route === '/api/openclaw/tools')?.[1], { operation: 'revoke-all' });
   f.doc.rejectTextareas = false;
   await f.get('refreshNativeControls').fire('click'); await settle();
   assert.equal(f.get('nativeError').textContent, '');
@@ -206,7 +206,7 @@ function permissionSnapshot() {
   const next = snapshot();
   next.toolCatalogue = ['read', 'exec', 'web_fetch'].map(name => ({ name, available: true }));
   next.nativeToolCatalogue = [{ name: 'sessions_list', source: 'native', available: true, description: 'Inspect native sessions.' }];
-  next.toolAuthority = { grant: { enabled: false, acknowledged: false, tools: [], roots: [], networkHosts: [], allowExecution: false } };
+  next.toolAuthority = { ...next.toolAuthority, grant: { enabled: false, acknowledged: false, tools: [], roots: [], networkHosts: [], allowExecution: false } };
   return next;
 }
 const hostChoice = (f, name) => f.get('nativeToolsForm').querySelector(`[data-host-tool="${name}"]`);
@@ -222,7 +222,8 @@ async function editNativeField(f, node, value) {
 test('host checkbox choices remain unapplied until explicit acknowledged Apply and then show saved readback', async () => {
   const next = permissionSnapshot();
   const f = fixture({ initial: next, saveTools: async payload => {
-    next.toolAuthority = { revision: 'saved-host-grant', grant: structuredClone(payload) }; return { toolAuthority: next.toolAuthority };
+    const { operation, ...grant } = payload;
+    next.toolAuthority = { ...next.toolAuthority, revision: 'saved-host-grant', grant: structuredClone(grant) }; return { toolAuthority: next.toolAuthority };
   } }); await settle();
   assert.equal(f.get('nativeToolsEnabled').checked, false);
   await editToolField(f, f.get('nativeToolsEnabled'), true);
@@ -242,7 +243,7 @@ test('host checkbox choices remain unapplied until explicit acknowledged Apply a
   f.get('nativeToolsAcknowledged').checked = true;
   await f.get('nativeToolsForm').fire('submit'); await settle();
   const posted = f.calls.filter(([route]) => route === '/api/openclaw/tools'); assert.equal(posted.length, 1);
-  assert.deepEqual(posted[0][1], { enabled: true, tools: ['read', 'exec'], roots: ['/disposable-project'], networkHosts: [],
+  assert.deepEqual(posted[0][1], { operation: 'save', enabled: true, tools: ['read', 'exec'], roots: ['/disposable-project'], networkHosts: [],
     allowExecution: true, acknowledged: true, browserCapabilities: { evaluate: false, credentials: false, payments: false } });
   assert.equal(f.get('nativeToolsEnabled').checked, true); assert.equal(hostChoice(f, 'exec').checked, true);
   assert.equal(f.get('nativeToolsAcknowledged').checked, false, 'A saved acknowledgement is never reused to authorize a later scope edit.');
@@ -254,7 +255,7 @@ test('host checkbox choices remain unapplied until explicit acknowledged Apply a
 test('additional OpenClaw checkboxes save only their native grant and leave file and shell permissions off', async () => {
   const next = permissionSnapshot();
   const f = fixture({ initial: next, saveNativeCapabilities: async payload => {
-    next.toolAuthority = { grant: { ...next.toolAuthority.grant, nativeCapabilities: structuredClone(payload) } };
+    next.toolAuthority = { ...next.toolAuthority, grant: { ...next.toolAuthority.grant, nativeCapabilities: structuredClone(payload) } };
     return { toolAuthority: next.toolAuthority, catalogue: next.nativeToolCatalogue };
   } }); await settle();
   f.controller.syncConnection({ connected: true, agentId: 'agent-a', runtimeReady: true, modelConfigured: true });
@@ -334,10 +335,11 @@ test('late host grant completion cannot apply its readback or clear the newly se
 for (const first of ['primary', 'native']) test(`applying the ${first} permission form preserves the other form's unapplied scope and acknowledgement`, async () => {
   const next = permissionSnapshot();
   const f = fixture({ initial: next, saveTools: async payload => {
-    next.toolAuthority = { grant: { ...structuredClone(payload), nativeCapabilities: next.toolAuthority.grant.nativeCapabilities } };
+    const { operation, ...grant } = payload;
+    next.toolAuthority = { ...next.toolAuthority, grant: { ...structuredClone(grant), nativeCapabilities: next.toolAuthority.grant.nativeCapabilities } };
     return { toolAuthority: next.toolAuthority };
   }, saveNativeCapabilities: async payload => {
-    next.toolAuthority = { grant: { ...next.toolAuthority.grant, nativeCapabilities: structuredClone(payload) } };
+    next.toolAuthority = { ...next.toolAuthority, grant: { ...next.toolAuthority.grant, nativeCapabilities: structuredClone(payload) } };
     return { toolAuthority: next.toolAuthority, catalogue: next.nativeToolCatalogue };
   } }); await settle();
   await editToolField(f, f.get('nativeToolsEnabled'), true); await editToolField(f, hostChoice(f, 'exec'), true);
@@ -393,4 +395,55 @@ test('native scope changes clear acknowledgement and a rejected save preserves t
   assert.equal(f.get('nativeCapabilitiesEnabled').checked, false); assert.equal(f.get('nativeBackgroundRuns').checked, false);
   assert.equal(f.get('nativeCapabilitiesAcknowledged').checked, false); assert.equal(f.get('nativeSettingPaths').value, '');
   assert.doesNotMatch(f.get('nativeCapabilityDraftStatus').textContent, /Unapplied/);
+});
+
+for (const first of ['primary', 'native']) test(`primary-off Apply and native Apply preserve separate grants in ${first}-first order; explicit revoke-all clears both`, async () => {
+  const next = permissionSnapshot();
+  next.toolAuthority.grant = { ...next.toolAuthority.grant, enabled: true, acknowledged: true, tools: ['exec'], allowExecution: true };
+  const f = fixture({ initial: next, saveTools: async payload => {
+    if (payload.operation === 'revoke-all') next.toolAuthority.grant = { enabled: false, acknowledged: false, tools: [], roots: [], networkHosts: [], allowExecution: false,
+      nativeCapabilities: { enabled: false, acknowledged: false, tools: [], settings: [], delegatedRuns: false, backgroundRuns: false } };
+    else {
+      const { operation, ...grant } = payload;
+      next.toolAuthority.grant = { ...structuredClone(grant), nativeCapabilities: next.toolAuthority.grant.nativeCapabilities };
+    }
+    return { toolAuthority: next.toolAuthority };
+  }, saveNativeCapabilities: async payload => {
+    next.toolAuthority.grant = { ...next.toolAuthority.grant, nativeCapabilities: structuredClone(payload) };
+    return { toolAuthority: next.toolAuthority, catalogue: next.nativeToolCatalogue };
+  } }); await settle();
+  await editToolField(f, f.get('nativeToolsEnabled'), false);
+  assert.equal(f.get('nativeToolsAcknowledged').checked, false, 'Disabling a primary grant does not need a new privilege acknowledgement.');
+  await editNativeField(f, f.get('nativeCapabilitiesEnabled'), true);
+  await editNativeField(f, f.get('nativeSettingPaths'), 'messages.queue');
+  await editNativeField(f, f.get('nativeCapabilitiesAcknowledged'), true);
+  await f.get(first === 'primary' ? 'nativeToolsForm' : 'nativeCapabilityForm').fire('submit'); await settle();
+  if (first === 'primary') {
+    assert.equal(f.get('nativeCapabilitiesEnabled').checked, true); assert.equal(f.get('nativeSettingPaths').value, 'messages.queue');
+    assert.equal(f.get('nativeCapabilitiesAcknowledged').checked, true); assert.match(f.get('nativeCapabilityDraftStatus').textContent, /Unapplied native choices/);
+  } else {
+    assert.equal(f.get('nativeToolsEnabled').checked, false); assert.match(f.get('nativeToolDraftStatus').textContent, /Unapplied choices/);
+  }
+  await f.get(first === 'primary' ? 'nativeCapabilityForm' : 'nativeToolsForm').fire('submit'); await settle();
+  const off = f.calls.find(([route]) => route === '/api/openclaw/tools')[1];
+  assert.equal(off.operation, 'save'); assert.equal(off.enabled, false);
+  assert.equal(next.toolAuthority.grant.enabled, false); assert.equal(next.toolAuthority.grant.nativeCapabilities.enabled, true);
+  assert.deepEqual(next.toolAuthority.grant.nativeCapabilities.settings, ['messages.queue']);
+  assert.equal(f.get('nativeCapabilitiesEnabled').checked, true);
+  await editNativeField(f, f.get('nativeSettingPaths'), 'messages.newDraft');
+  await f.get('disableNativeTools').fire('click'); await settle();
+  assert.deepEqual(f.calls.filter(([route]) => route === '/api/openclaw/tools').at(-1)[1], { operation: 'revoke-all' });
+  assert.equal(next.toolAuthority.grant.enabled, false); assert.equal(next.toolAuthority.grant.nativeCapabilities.enabled, false);
+  assert.equal(f.get('nativeCapabilitiesEnabled').checked, false); assert.equal(f.get('nativeSettingPaths').value, '');
+  assert.doesNotMatch(f.get('nativeCapabilityDraftStatus').textContent, /Unapplied/);
+});
+
+test('older runtime cannot save separate primary scopes, but explicit revoke-all retains safe legacy behavior', async () => {
+  const next = permissionSnapshot(); delete next.toolAuthority.operations;
+  const f = fixture({ initial: next }); await settle();
+  await f.get('nativeToolsForm').fire('submit'); await settle();
+  assert.match(f.get('nativeError').textContent, /Update your local ChainChat to 1\.1\.3 to save separate permission scopes/);
+  assert.equal(f.calls.some(([route]) => route === '/api/openclaw/tools'), false);
+  await f.get('disableNativeTools').fire('click'); await settle();
+  assert.deepEqual(f.calls.filter(([route]) => route === '/api/openclaw/tools').map(([, payload]) => payload), [{ enabled: false }]);
 });
