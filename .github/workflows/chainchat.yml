@@ -10,7 +10,7 @@ on:
         description: 'Full release acceptance or focused native diagnosis'
         type: choice
         default: full
-        options: [full, byok-reliability, native-settings, live-deepseek]
+        options: [full, byok-reliability, native-settings, tool-grants, live-deepseek]
 permissions:
   contents: read
 jobs:
@@ -109,6 +109,8 @@ jobs:
           set -euo pipefail
           if [[ "$CT_CI_SUITE" == "byok-reliability" ]]; then
             node --test test/openclaw-reliability.integration.test.mjs
+          elif [[ "$CT_CI_SUITE" == "tool-grants" ]]; then
+            node --test test/openclaw-tools-ui.integration.test.mjs test/tool-authority.test.mjs test/host-process-context.test.mjs test/chat-tools-ui.test.mjs test/native-settings-integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "native-settings" ]]; then
             node --test test/openclaw-native-controls.integration.test.mjs test/native-channel-routes.test.mjs test/native-settings-integration.test.mjs test/native-config-form.test.mjs test/native-settings-browser.test.mjs test/managed-browser-service.test.mjs test/tool-authority.test.mjs test/chat-errors.test.mjs
           else

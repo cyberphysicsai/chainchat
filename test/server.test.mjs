@@ -426,6 +426,49 @@ test('perspective branches cannot inherit explicit host grants while the selecte
   assert.ok(Object.values(disabled.agents).every(entry => !entry.grant.enabled));
 });
 
+test('review receives current native-only tools on the next turn without mistaking settings for tool authority', async t => {
+  const generated = [];
+  const f = await fixture(t, { prepare: (request, chain) => {
+    const equipped = inspect(chain).faculties.filter(item => request.loadout.includes(item.key));
+    return { runtime: { mode: 'active' }, trustedAgentContext: { genesisHash: HASH(0), equippedFaculties: equipped },
+      facultyExecution: { scope: 'turn', entries: equipped.map(item => ({ ...item, mode: 'computed', status: 'completed', mechanism: 'base-op' })) } };
+  }, openclawFactory: () => ({ start: async () => {}, close: async () => {},
+    status: () => ({ backend: 'openclaw', version: 'fixture', running: true }),
+    describeControls: async () => ({}), executeCommand: async () => ({}),
+    toolCatalogue: async () => ({ tools: [{ name: 'sessions_list' }] }),
+    sessionControls: async () => ({ sessionKey: 'stable', goal: null }),
+    generate: async (_config, args, context) => {
+      generated.push({ args, context });
+      return { text: 'Current capability status comes from this turn. No tools have executed.', usage: {} };
+    },
+  }) });
+  await f.ready();
+  const native = { enabled: true, acknowledged: true, tools: ['sessions_list'], settings: [], delegatedRuns: false, backgroundRuns: false };
+  for (const [grant, expected] of [
+    [native, ['sessions_list']],
+    [{ ...native, tools: [], settings: ['*'] }, []],
+    [{ ...native, enabled: false }, []],
+    [native, ['sessions_list']],
+  ]) {
+    const saved = await f.request('/api/openclaw/native-capabilities', grant);
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.equal(saved.body.toolAuthority.grant.enabled, false, 'Primary host tools remain disabled.');
+    const before = generated.length;
+    const answer = await f.request('/api/chat', { message: 'Report current tool availability.' });
+    assert.equal(answer.status, 200, JSON.stringify(answer.body));
+    assert.equal(generated.length, before + 1, 'Saving a grant takes effect immediately without restarting the Gateway.');
+    const current = generated.at(-1);
+    assert.equal(current.context.toolAuthority.enabled, false);
+    assert.deepEqual(current.context.toolAuthority.nativeCapabilities.tools, grant.tools);
+    assert.deepEqual(f.reviewCalls.at(-1).args.hostProcessContext.toolScope, { external: expected, ownSession: [] });
+    assert.match(current.args.system, /rather than earlier messages, remembered grant snapshots or identity metadata/);
+    assert.match(current.args.system, /disabled primary flag does not disable explicitly admitted native tools/);
+    assert.match(current.args.system, /Do not invent a restart, global setting or session mismatch/);
+    assert.match(current.args.system, /persistence can occur without a model filesystem call/);
+  }
+  assert.equal(f.modelCalls.length, 0, 'Only the fake OpenClaw adapter ran.');
+});
+
 test('new Browser grants without hosts are refused without replacing the current grant, and revocation still works', async t => {
   const native = managedNativeFixture(), f = await fixture(t, { openclawFactory: native.factory }); await f.ready();
   const grant = { enabled: true, tools: ['read'], roots: [], networkHosts: [], acknowledged: true };

@@ -15,6 +15,9 @@ test('saved tool grants are separate from runtime health, memory pause, executab
   assert.equal(chatToolAccess(snapshot, { ...agent, runtimeReady: false }).status, 'Grants saved · runtime unavailable');
   assert.equal(chatToolAccess(snapshot, { ...agent, memoryPaused: true }).status, 'Tools paused with memory');
   assert.equal(chatToolAccess(snapshot, { ...agent, chainHeld: true }).status, 'Tools held for chain review');
+  assert.match(chatToolAccess(snapshot, { ...agent, memoryPaused: true }).detail, /Resume Timechain to use tools; applying permissions does not resume it/);
+  assert.match(chatToolAccess(snapshot, { ...agent, chainHeld: true }).detail, /Resolve the chain hold/);
+  assert.equal(chatToolAccess(snapshot, { ...agent, learning: false }).status, '3 tool grants saved', 'Disabling learning alone does not pause admitted tools.');
   assert.equal(chatToolAccess(null, agent).status, 'Tool status unavailable');
   assert.equal(chatToolAccess(snapshot, { ...agent, agentId: '' }).status, 'Select a Timechain');
   assert.doesNotMatch(chatToolAccess(snapshot, agent).detail, /private-directory|docs\.example\.com/);
@@ -37,4 +40,17 @@ test('tool activity separates approval from observed completion and expires acro
   assert.equal(chatToolActivity({ events: [{ ...result, label: 'Tool exec completed with private output' }] }, true), '');
   assert.equal(chatToolActivity({ events: [{ ...result, status: 'failed', label: 'Tool exec failed' }] }, true), 'exec · tool reported failure');
   assert.equal(chatToolActivity({ events: [{ ...result, status: 'started', label: 'Tool image_generate started' }] }, true), 'image_generate · tool started');
+});
+
+test('additional native grants never imply an exec or scoped filesystem grant', () => {
+  const nativeOnly = { toolCatalogue: snapshot.toolCatalogue, toolAuthority: { grant: {
+    enabled: false, tools: [], roots: [], networkHosts: [], allowExecution: false, acknowledged: false,
+    nativeCapabilities: { enabled: true, acknowledged: true, tools: ['sessions_list'], settings: ['messages.queue'] },
+  } } };
+  const view = chatToolAccess(nativeOnly, agent);
+  assert.equal(view.status, 'Native grants only · exec off');
+  assert.match(view.detail, /0 file, shell and network tool grants, 1 additional native tool grants/);
+  assert.match(view.detail, /execution grant off/);
+  assert.match(view.detail, /Additional OpenClaw tools or settings do not enable the separate read, write, edit, exec/);
+  assert.equal(hostToolChoices(nativeOnly).some(tool => tool.selected), false);
 });
