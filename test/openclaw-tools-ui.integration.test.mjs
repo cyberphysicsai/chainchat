@@ -84,11 +84,18 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
   let app, browser, upstream, gatewayChild, initialGatewayPid, gatewayBaselineStarts, browserBearer = '', gatewayStarts = 0;
   const gatewayChildren = [], requests = [], reviews = [], nativeCalls = [], pageErrors = [];
   const readinessProbes = new Map();
-  let diagnostics = '';
-  const recordDiagnostic = line => { diagnostics = (diagnostics + line).slice(-10000); };
+  let diagnostics = '', criticalDiagnostics = '', diagnosticFragment = '';
+  const recordDiagnostic = chunk => {
+    diagnostics = (diagnostics + chunk).slice(-10000);
+    const lines = (diagnosticFragment + chunk).split('\n');
+    diagnosticFragment = lines.pop().slice(-1024);
+    for (const line of lines) if (/^\[chainchat\]/u.test(line))
+      criticalDiagnostics = (criticalDiagnostics + line.slice(0, 1024) + '\n').slice(-10000);
+  };
   const fixtureFailure = (error, stage) => new Error(
     `${stage} failed${error.code ? ` (${error.code})` : ''}: ${error.message}\n` +
     `Isolated readiness probes: ${JSON.stringify(Object.fromEntries(readinessProbes))}\n` +
+    `ChainChat runtime events:\n${criticalDiagnostics || '[none recorded]'}\n` +
     `Isolated runtime diagnostics:\n${diagnostics || '[none recorded]'}`,
     { cause: error },
   );
