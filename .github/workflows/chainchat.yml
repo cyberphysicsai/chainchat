@@ -133,7 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$CT_CI_SUITE" == "byok-reliability" ]]; then
-            node --test test/openclaw-reliability.integration.test.mjs
+            node --test --test-concurrency=1 test/openclaw-reliability.integration.test.mjs test/openclaw-queued-input.integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "tool-grants" ]]; then
             node --test test/openclaw-tools-ui.integration.test.mjs test/tool-authority.test.mjs test/host-process-context.test.mjs test/chat-tools-ui.test.mjs test/native-settings-integration.test.mjs test/native-media-completion.test.mjs test/native-media-task-bindings.test.mjs
           elif [[ "$CT_CI_SUITE" == "runtime-upgrade" ]]; then
