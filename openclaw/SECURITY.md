@@ -30,8 +30,12 @@ safety semantics are changed by that overlay. The separate
 skips usage probes in `models.authStatus` while preserving credential-status
 metadata. The `admitted-tool-presentation-v1` overlay also keeps inactive tool
 definitions out of the model's current tool list, using the runtime's computed
-callable set. The installer checks all six exact original SHA-256 values before
-replacement, and doctor and Gateway require all six final hashes. The original
+callable set. The `managed-system-context-v1` overlay keeps the mandatory context
+engine's current system assembly out of persisted prompt updates. The private
+provider proxy still requires one current capability in the system context and
+strips it before forwarding. The installer checks all seven exact original
+SHA-256 values before replacement, and doctor and Gateway require all seven
+final hashes. The original
 npm SRI describes the downloaded archive. A separate dependency overlay selects external
 Undici 8.12.4, Zod 4.6.7, npm 12.2.2 and Minimatch 11.0.8. These are ordinary dependency overrides,
 not edits to the upstream source tarball. The runtime lockfile, setup integrity

@@ -1,4 +1,4 @@
-/** Verify the installed SDK metadata and API-key policy overlays. */
+/** Verify the installed SDK admission and API-key policy overlays. */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -14,6 +14,9 @@ const expected = [
   }},
   {id: 'admitted-tool-presentation-v1', files: {
     'dist/attempt-transcript-helpers-BEGc_WgE.mjs':['4e4bdc40e686429d73c118c4ff5072fc6fcf34cd822401db9f1c693b688f97f4','318cb78c420356d44fa6bcdc454ba4e77e1d1bcb634d8475de98f22b6395e7ba'],
+  }},
+  {id: 'managed-system-context-v1', files: {
+    'dist/attempt-D0eWH9Mj.mjs':['d3b813a804ce7f4d6da2eb113a5832b79f7bbfcd18fa3c42eb24f6977d7fe52e','4a1aefcd4df65b3d8b8a5ce95080f660e8070a21706a8edc1e62c08f4d1b6f7f'],
   }},
 ];
 function matchesCommitment(overlay, index) {

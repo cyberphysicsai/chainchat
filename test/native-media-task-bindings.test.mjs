@@ -178,7 +178,8 @@ test('the actual pinned completion formatter plus exact native task receipt prod
   const chunks=(await fs.readdir(path.join(packageRoot,'dist'))).filter(name=>/^internal-events-[\w-]+\.mjs$/u.test(name));
   assert.equal(chunks.length,1);
   // Test-only producer validation. No production code imports private chunks.
-  const format=(await import(pathToFileURL(path.join(packageRoot,'dist',chunks[0])).href)).i;
+  const format=(await import(pathToFileURL(path.join(packageRoot,'dist',chunks[0])).href)).r;
+  assert.equal(typeof format,'function');
   const f=await fixture(t,{parseMediaCompletion:parseNativeMediaCompletion});
   await f.registry.permitMedia(f.input);await f.observe();
   const reference=f.references[0],instruction='The image is ready for the original chat. Follow the current visible-reply contract with a short user-facing caption and every structured generated attachment from this event. Keep internal task/session details private and do not copy the internal event text verbatim.';

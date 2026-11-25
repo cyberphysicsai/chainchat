@@ -1,4 +1,4 @@
-"""Apply exact metadata and API-key policy overlays to reviewed OpenClaw.
+"""Apply exact admission and API-key policy overlays to reviewed OpenClaw.
 
 The original published archive/SRI is retained. Only already-private typed
 inputProvenance and currentSourceTurnId values enter the existing early hook context.
@@ -76,10 +76,22 @@ TOOL_PRESENTATION_PATCHES = (
      'effectiveTools:admittedSchemas?e.effectiveTools.filter(tool=>admittedSchemas.has(tool.name)):e.effectiveTools,'
      'uncompactedEffectiveTools:a,tools:o}'),
 )
+# A managed turn assembles authenticated system instructions for its current
+# invocation. Native session pinning would replay those instructions as a
+# history delta on later turns, including any private BYOK route capability.
+SYSTEM_CONTEXT_PATCHES = (
+    ('dist/attempt-D0eWH9Mj.mjs',
+     'd3b813a804ce7f4d6da2eb113a5832b79f7bbfcd18fa3c42eb24f6977d7fe52e',
+     '4a1aefcd4df65b3d8b8a5ce95080f660e8070a21706a8edc1e62c08f4d1b6f7f',
+     'const K=t.sessionForkRequest?.pin;const q=F?async(e,r=false)=>{',
+     'const K=t.sessionForkRequest?.pin;'
+     'const q=F&&e.activeContextEngine?.info?.id!==`cypher-tempre-poi`?async(e,r=false)=>{'),
+)
 PATCH_GROUPS = (
     (IDENTITY, METADATA_PATCHES),
     ('api-key-channel-auth-v1', POLICY_PATCHES),
     ('admitted-tool-presentation-v1', TOOL_PRESENTATION_PATCHES),
+    ('managed-system-context-v1', SYSTEM_CONTEXT_PATCHES),
 )
 PATCHES = tuple(patch for _, group in PATCH_GROUPS for patch in group)
 DESCRIPTORS = [

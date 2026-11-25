@@ -52,7 +52,7 @@ jobs:
           python installer/security_overlays.py --application . --cache "$RUNNER_TEMP/chainchat-security-overlays"
           python installer/runtime_compatibility.py --application .
           python installer/check_upstream.py > "$RUNNER_TEMP/chainchat-upstream-check.json"
-          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert [(row["id"],len(row["files"])) for row in overlays]==[("early-hook-input-provenance-v2",2),("api-key-channel-auth-v1",3),("admitted-tool-presentation-v1",1)]'
+          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert [(row["id"],len(row["files"])) for row in overlays]==[("early-hook-input-provenance-v2",2),("api-key-channel-auth-v1",3),("admitted-tool-presentation-v1",1),("managed-system-context-v1",1)]'
           node openclaw/launcher.mjs --check
           echo "CT_OPENCLAW_PACKAGE=$GITHUB_WORKSPACE/openclaw/runtime/node_modules/openclaw" >> "$GITHUB_ENV"
           echo "CT_OPENCLAW_NODE=$(node -p process.execPath)" >> "$GITHUB_ENV"
@@ -135,7 +135,7 @@ jobs:
           if [[ "$CT_CI_SUITE" == "byok-reliability" ]]; then
             node --test test/openclaw-reliability.integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "tool-grants" ]]; then
-            node --test test/openclaw-tools-ui.integration.test.mjs test/tool-authority.test.mjs test/host-process-context.test.mjs test/chat-tools-ui.test.mjs test/native-settings-integration.test.mjs
+            node --test test/openclaw-tools-ui.integration.test.mjs test/tool-authority.test.mjs test/host-process-context.test.mjs test/chat-tools-ui.test.mjs test/native-settings-integration.test.mjs test/native-media-completion.test.mjs test/native-media-task-bindings.test.mjs
           elif [[ "$CT_CI_SUITE" == "runtime-upgrade" ]]; then
             node --test --test-concurrency=1 test/native-upgrade.integration.test.mjs test/openclaw-native-heartbeat.integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "native-settings" ]]; then
@@ -300,7 +300,7 @@ jobs:
           python installer/security_overlays.py --application . --cache "$RUNNER_TEMP/chainchat-security-overlays"
           python installer/runtime_compatibility.py --application .
           python installer/check_upstream.py > "$RUNNER_TEMP/chainchat-upstream-check.json"
-          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert [(row["id"],len(row["files"])) for row in overlays]==[("early-hook-input-provenance-v2",2),("api-key-channel-auth-v1",3),("admitted-tool-presentation-v1",1)]'
+          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert [(row["id"],len(row["files"])) for row in overlays]==[("early-hook-input-provenance-v2",2),("api-key-channel-auth-v1",3),("admitted-tool-presentation-v1",1),("managed-system-context-v1",1)]'
           node openclaw/launcher.mjs --check
           echo "CT_OPENCLAW_PACKAGE=$GITHUB_WORKSPACE/openclaw/runtime/node_modules/openclaw" >> "$GITHUB_ENV"
           echo "CT_OPENCLAW_NODE=$(node -p process.execPath)" >> "$GITHUB_ENV"
