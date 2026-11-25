@@ -43,7 +43,7 @@ in the same file. Setup refuses a different upstream version or damaged archive.
 Windows uses the official embeddable CPython 3.15.2 archive. macOS and Linux
 use Astral's CPython 3.15.2 standalone builds from its 20261026 release.
 
-`runtimeCompatibilityOverlays` records five exact groups for OpenClaw 2026.11.10.
+`runtimeCompatibilityOverlays` records six exact groups for OpenClaw 2026.11.10.
 `early-hook-input-provenance-v2` covers two early hook files.
 `api-key-channel-auth-v1` covers the shared raw `/login` dispatch, built-in
 command registry and native auth-status handler. `admitted-tool-presentation-v1`
@@ -52,7 +52,9 @@ set. Deferred tools stay deferred. `managed-system-context-v1` keeps the managed
 PoI engine's fresh system context in the system message instead of saving it as a
 session prompt update. `managed-delivery-session-v1` passes the validated managed
 session to the outgoing-message hook for scheduled and channel sends. The plugin
-independently checks the exact delivery permit. The installer validates each input
+independently checks the exact delivery permit. `managed-generated-media-delivery-v1`
+routes typed generated-media completion to the managed owner's review before
+display or delivery. The installer validates each input
 before replacement and accepts exact original or reviewed output bytes. Launcher
 doctor and Gateway require all final hashes before startup. The metadata overlay preserves typed
 asynchronous task provenance and original client-nonce correlation at mandatory

@@ -99,12 +99,42 @@ DELIVERY_SESSION_PATCHES = (
      'const g=e.session?.key??(typeof policyKey===`string`&&/^agent:main:chainchat-control:[a-f0-9]{64}$/.test(policyKey)?policyKey:void 0);'
      'const _=[{changedKey:`replyHookChanged`'),
 )
+# Keep generated output in the managed native task handoff until ChainChat
+# owns an exact reference receipt. Stock 11.10 can send media or run a caption
+# before its completion turn enters the mandatory hooks.
+MANAGED_MEDIA_PATCHES = (
+    ('dist/subagent-announce-delivery-BNgtsNUw.mjs',
+     'fbe693c24c8349c0cf5a425b7fedbac3b3bf79e458a0932d626051e1e84f94e7',
+     'de84b0af0a40a67a3445fa2e8f94cd42e3a12043f3e390c475966206c5f63d6f',
+     'if(sourceOwnerChanged())return sourceOwnerChangedResult();const t=collectExpectedMediaFromInternalEvents(e.internalEvents);',
+     '''if(sourceOwnerChanged())return sourceOwnerChangedResult();
+const chainchatMediaKinds={image_generate:`image`,video_generate:`video`,music_generate:`music`};
+if(e.expectsCompletionMessage&&Object.hasOwn(chainchatMediaKinds,e.sourceTool)&&readRuntimeConfig().plugins?.slots?.contextEngine===`cypher-tempre-poi`){
+  const mediaKind=chainchatMediaKinds[e.sourceTool];
+  const event=e.internalEvents?.length===1?e.internalEvents[0]:null;
+  const validStatus=event?.status===`ok`&&event.statusLabel===`completed successfully`||event?.status===`error`&&event.statusLabel===`failed`;
+  if(!validStatus||event.type!==`task_completion`||event.source!==mediaKind+`_generation`||
+     event.childSessionKey!==e.sourceSessionKey||event.childSessionKey!==e.sourceTool+`:`+event.childSessionId||
+     !event.childSessionId?.startsWith(`tool:`+e.sourceTool+`:`)||
+     event.status===`ok`&&!event.attachments?.length)
+    return{delivered:false,path:`none`,reason:`completion_handoff_unavailable`,disposition:`permanent_failure`};
+  const privateNotice=`Keep internal task/session details private and do not copy the internal event text verbatim.`;
+  const replyInstruction=event.status===`ok`?
+    `The ${mediaKind} is ready for the original chat. Follow the current visible-reply contract with a short user-facing caption and every structured generated attachment from this event. ${privateNotice}`:
+    `${mediaKind[0].toUpperCase()+mediaKind.slice(1)} generation task failed for the original chat. Follow the current visible-reply contract with a concise user-facing failure message. ${privateNotice}`;
+  const{r:formatAgentInternalEventsForPrompt}=await import(`./internal-events-2yIaMSmk.mjs`);
+  const triggerMessage=formatAgentInternalEventsForPrompt([{...event,replyInstruction}]);
+  return sendSubagentAnnounceDirectly({...e,triggerMessage,internalEvents:void 0,inputAttachments:void 0});
+}
+const t=collectExpectedMediaFromInternalEvents(e.internalEvents);'''),
+)
 PATCH_GROUPS = (
     (IDENTITY, METADATA_PATCHES),
     ('api-key-channel-auth-v1', POLICY_PATCHES),
     ('admitted-tool-presentation-v1', TOOL_PRESENTATION_PATCHES),
     ('managed-system-context-v1', SYSTEM_CONTEXT_PATCHES),
     ('managed-delivery-session-v1', DELIVERY_SESSION_PATCHES),
+    ('managed-generated-media-delivery-v1', MANAGED_MEDIA_PATCHES),
 )
 PATCHES = tuple(patch for _, group in PATCH_GROUPS for patch in group)
 DESCRIPTORS = [

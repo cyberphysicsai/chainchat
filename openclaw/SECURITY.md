@@ -35,7 +35,9 @@ engine's current system assembly out of persisted prompt updates. The private
 provider proxy still requires one current capability in the system context and
 strips it before forwarding. `managed-delivery-session-v1` supplies the managed
 session key to the existing outgoing-message gate, which still checks and consumes
-the exact delivery permit. The installer checks each original SHA-256 before
+the exact delivery permit. `managed-generated-media-delivery-v1` keeps generated
+media in local custody at completion and sends the verified owner-bound task
+event to the managed review path. The installer checks each original SHA-256 before
 replacement, and doctor and Gateway require every final hash. The original
 npm SRI describes the downloaded archive. A separate dependency overlay selects external
 Undici 8.12.4, Zod 4.6.7, npm 12.2.2 and Minimatch 11.0.8. These are ordinary dependency overrides,
