@@ -674,7 +674,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
           // overrides; it must never silently charge a saved native profile.
           utilityModel: '',
           compaction: { memoryFlush: { enabled: false } },
-          heartbeat: { every: "0m" }, maxConcurrent: 1 } },
+          maxConcurrent: 1 } },
         // Upstream defaults to remote OpenAI embeddings and on-start sync.
         // Native memory remains available only by explicit owner opt-in.
         memory:{search:{enabled:false}},
@@ -691,7 +691,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
         logging: { level: "error", consoleLevel: "error" },
         plugins: { enabled: true, allow: [...new Set(["cypher-tempre-poi", "browser",...bundledPlugins])], slots: { contextEngine: "cypher-tempre-poi" }, load: { paths: [plugin] }, entries: {
           browser: { enabled: true },
-          "cypher-tempre-poi": { enabled: true, llm:{allowAgentIdOverride:true}, hooks: { allowConversationAccess: true, allowPromptInjection: true }, config: {
+          "cypher-tempre-poi": { enabled: true, llm:{allowAgentIdOverride:true}, hooks: { allowConversationAccess: true, allowPromptModification: true }, config: {
             brokerUrl: brokerUrl.href.replace(/\/$/, ""), brokerTokenEnv: "CHAINCHAT_BROKER_TOKEN",...(mediaRoot?{mediaRoot:path.resolve(mediaRoot)}:{}) } } } } };
       const controlledConfiguration = mergeControlOverlay(baseConfiguration, managedServices);
       controlledConfiguration.plugins.allow=[...new Set([...baseConfiguration.plugins.allow,...(controlledConfiguration.plugins.allow||[])])];

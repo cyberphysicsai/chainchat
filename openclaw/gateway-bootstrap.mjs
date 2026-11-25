@@ -18,4 +18,7 @@ process.on('message', message => {
   process.emit('SIGTERM');
   if (process.connected) process.disconnect();
 });
+// A rejected CLI startup sets an exit code and returns. The supervisor's
+// shutdown listener must not keep a Gateway that never bound a port alive.
+process.channel?.unref();
 await import(pathToFileURL(entrypoint).href);

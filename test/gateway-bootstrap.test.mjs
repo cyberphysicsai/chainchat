@@ -55,7 +55,7 @@ test('file bootstrap preserves OpenClaw CLI argv and permits inherited file work
 test('file bootstrap retains authenticated-supervisor IPC shutdown delivery', {timeout: 15000}, async t => {
   const f = await fixture(t);
   const target = path.join(f.directory, 'shutdown-target.mjs');
-  await fs.writeFile(target, `process.on('SIGTERM', () => {process.send?.({stopped: true}); process.exitCode=0;}); process.send?.({ready:true});\n`);
+  await fs.writeFile(target, `const liveGateway=setInterval(()=>{}, 1000); process.on('SIGTERM', () => {clearInterval(liveGateway); process.send?.({stopped: true}); process.exitCode=0;}); process.send?.({ready:true});\n`);
   const child = spawn(process.execPath, [bootstrap, target], {stdio: ['ignore', 'ignore', 'pipe', 'ipc'], windowsHide: true});
   const messages = [], stderr = [];
   child.on('message', value => messages.push(value)); child.stderr.on('data', value => stderr.push(value));
@@ -67,6 +67,15 @@ test('file bootstrap retains authenticated-supervisor IPC shutdown delivery', {t
   assert.equal(code, 0); assert.equal(signal, null);
   assert.deepEqual(messages, [{ready: true}, {stopped: true}]);
   assert.equal(Buffer.concat(stderr).toString(), '');
+});
+
+test('a rejected startup returns its CLI exit code with the supervisor pipe still open', {timeout: 10000}, async t => {
+  const f = await fixture(t);
+  const target = path.join(f.directory, 'invalid-config.mjs');
+  await fs.writeFile(target, 'process.exitCode = 78;\n');
+  const child = spawn(process.execPath, [bootstrap, target], {stdio: ['ignore', 'ignore', 'pipe', 'ipc'], windowsHide: true});
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill(); });
+  assert.deepEqual(await once(child, 'close'), [78, null]);
 });
 
 test('managed Gateway actually selects the file bootstrap without eval-only worker flags', async t => {
