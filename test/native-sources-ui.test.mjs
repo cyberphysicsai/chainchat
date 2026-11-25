@@ -38,9 +38,9 @@ class Node {
 }
 const descendants = node => [node,...node.children.flatMap(descendants)];
 const settle = async () => { for(let i=0;i<8;i++) await Promise.resolve(); };
-function fixture(api = async () => response()) {
+function fixture(api = async () => response(), openSchedules) {
   const doc={ids:new Map(),createElement(tag){return new Node(tag,this);}},mount=doc.createElement('div'),calls=[];let owner=1;
-  const controller=mountNativeSourceCard({document:doc,mount,api:async(...args)=>{calls.push(args);return api(...args);},context:()=>owner});
+  const controller=mountNativeSourceCard({document:doc,mount,api:async(...args)=>{calls.push(args);return api(...args);},context:()=>owner,openSchedules});
   return {doc,mount,calls,controller,get:id=>doc.ids.get(id),changeOwner(){owner++;controller.reset();}};
 }
 
@@ -91,6 +91,27 @@ test('stale source discovery and enrollment errors cannot leak another owner sta
 });
 
 const heartbeat = {id:'b'.repeat(64),kind:'heartbeat',agentId:'main'};
+test('retired Heartbeat sources remain visible and revocable while setup links to reviewed Schedules', async () => {
+  const retired = { ...available, heartbeatRetired: true };
+  let navigated = 0;
+  const f = fixture(async (_route, payload) => ({
+    available: retired, sources: payload.action === 'revoke' ? [] : [heartbeat],
+  }), () => { navigated++; });
+  f.controller.render(snapshot()); await settle();
+  assert.equal(f.get('retiredNativeHeartbeatNotice').hidden, false);
+  const option = f.get('nativeSourceKind').children.find(row => row.value === 'heartbeat');
+  assert.equal(option.disabled, true);
+  assert.equal(option.hidden, true);
+  assert.throws(() => nativeSourceEnrollment(heartbeat, retired), /Open Schedules/);
+  assert.ok(descendants(f.get('nativeEnrolledSources')).some(node => /Inactive/.test(node.textContent)));
+  assert.ok(descendants(f.mount).every(node => node.dataset.nativeScratchSource === undefined));
+  await descendants(f.get('retiredNativeHeartbeatNotice')).find(node => node.textContent === 'Open Schedules').fire();
+  assert.equal(navigated, 1);
+  assert.equal(f.calls.length, 1, 'Opening Schedules creates no job or enrollment.');
+  await descendants(f.mount).find(node => node.dataset.nativeSourceId === heartbeat.id).fire();
+  assert.deepEqual(f.calls.at(-1), ['/api/openclaw/sources', { action: 'revoke', id: heartbeat.id }]);
+});
+
 const notes = (content='Review the local progress.', currentRevision=7) => ({sourceId:heartbeat.id,agentId:'main',content,currentRevision,maxBytes:262144});
 test('heartbeat notes accept only the enrolled source identity, bounded UTF-8 content and current native revision',()=>{
   assert.deepEqual(nativeHeartbeatScratch({...notes(),jobId:'private-native-id',token:'not-public'},heartbeat),notes());

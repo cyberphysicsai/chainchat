@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { controlSessionKey, createNativeControls, validateControlPatch, redactNativeControl, nativeConfigSections, readControlOverlay } from '../lib/openclaw-controls.mjs';
+import { controlSessionKey, createNativeControls, validateControlPatch, redactNativeControl, nativeConfigSections, readControlOverlay, controlOverlayRecord } from '../lib/openclaw-controls.mjs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -133,11 +133,42 @@ test('broad native owner consent cannot replace enforcement, credentials or owne
   assert.deepEqual(validateControlPatch(allowed, { nativeCapabilities }), allowed);
   for (const patch of [{ plugins: { enabled: false } }, { plugins: { slots: { contextEngine: 'other' } } },
     { plugins: { allow: ['other'] } }, { plugins: { entries: { 'cypher-tempre-poi': { config: {} } } } },
+    { plugins: { entries: { 'cypher-tempre-poi': { hooks: { allowPromptModification: false } } } } },
     { plugins: { entries: { browser: { config: {} } } } }, { plugins: { entries: { trustedCalendar: { enabled: true } } } },
     { plugins: { entries: { trustedCalendar: null } } }, { models: {} }, { gateway: { auth: { token: 'private' } } },
     { agents: { defaults: { workspace: '/other', compaction: { provider: 'legacy' } } } },
     { browser: { cdpUrl: 'http://127.0.0.1:9222', noSandbox: true } }, { mcp: { apiKey: 'private' } }])
     assert.throws(() => validateControlPatch(patch, { nativeCapabilities }), { code: 'OPENCLAW_SETTING_GUARDED' }, JSON.stringify(patch));
+});
+
+test('saved plugin hooks migrate the exact prompt permission without rewriting the source or accepting conflicts', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ct-controls-hook-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'controls.json');
+  const nativeCapabilities = { enabled: true, acknowledged: true, settings: ['*'] };
+  const patchFor = hooks => ({ plugins: { entries: { trustedCalendar: { hooks } } } });
+  const write = async patch => {
+    const source = JSON.stringify({ version: 1, revision: 'a'.repeat(64), patch });
+    await fs.writeFile(file, source);
+    return source;
+  };
+  for (const allowed of [true, false]) {
+    const legacy = patchFor({ allowConversationAccess: true, allowPromptInjection: allowed });
+    const expected = patchFor({ allowConversationAccess: true, allowPromptModification: allowed });
+    const original = await write(legacy);
+    assert.deepEqual(await readControlOverlay(directory), { revision: 'a'.repeat(64), patch: expected });
+    assert.equal(await fs.readFile(file, 'utf8'), original);
+    assert.deepEqual(validateControlPatch(expected, { nativeCapabilities }), expected);
+    assert.throws(() => validateControlPatch(legacy, { nativeCapabilities }), { code: 'OPENCLAW_SETTING_GUARDED' });
+  }
+  for (const hooks of [
+    { allowPromptInjection: true, allowPromptModification: false },
+    { allowPromptInjection: 'true' },
+  ]) {
+    const original = await write(patchFor(hooks));
+    await assert.rejects(readControlOverlay(directory), { code: 'OPENCLAW_SETTING_GUARDED' });
+    assert.equal(await fs.readFile(file, 'utf8'), original);
+  }
 });
 
 test('private current capability resolver wins over stale update snapshots', async () => {
@@ -160,6 +191,44 @@ test('approved native configuration survives restart without persisting executio
   assert.deepEqual((await readControlOverlay(directory)).patch, patch);
   await fs.writeFile(path.join(directory, 'controls.json'), JSON.stringify({ version: 1, revision: 'a'.repeat(64), patch: { plugins: { enabled: false } } }));
   await assert.rejects(readControlOverlay(directory), { code: 'OPENCLAW_SETTING_GUARDED' });
+});
+
+test('retired heartbeat settings survive settings save and rollback outside the effective configuration', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ct-retired-heartbeat-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'controls.json');
+  const revision = 'b'.repeat(64);
+  const defaults = { every: '17m', prompt: 'Private previous heartbeat note' };
+  const list = { every: '18m' }, entries = { every: '19m' };
+  const original = JSON.stringify({ version: 1, revision, patch: {
+    agents: { defaults: { thinkingDefault: 'low', heartbeat: defaults },
+      list: [{ id: 'main', heartbeat: list }], entries: { main: { heartbeat: entries } } },
+  } });
+  await fs.writeFile(file, original);
+  const previous = await readControlOverlay(directory);
+  assert.equal(await fs.readFile(file, 'utf8'), original, 'A startup read must leave the old file intact.');
+  assert.deepEqual(previous.patch, { agents: { defaults: { thinkingDefault: 'low' } } });
+  assert.deepEqual(previous.retiredHeartbeat, [
+    { source: 'defaults', settings: defaults },
+    { source: 'list', agentId: 'main', settings: list },
+    { source: 'entries', agentId: 'main', settings: entries },
+  ]);
+  const publicConfig = (await createNativeControls({
+    rpc: async () => ({}), getRuntime: () => ({}), readOverlay: async () => previous,
+  }).describeControls(null)).config;
+  assert.deepEqual(publicConfig.editable, previous.patch);
+  assert.doesNotMatch(JSON.stringify(publicConfig), /Private previous heartbeat note|retiredHeartbeat/u);
+  const saved = controlOverlayRecord({ ...previous, revision: 'c'.repeat(64), patch: { messages: { queue: { cap: 20 } } } });
+  for (const record of [saved, controlOverlayRecord(previous)]) {
+    await fs.writeFile(file, JSON.stringify(record));
+    assert.deepEqual(await readControlOverlay(directory), {
+      revision: record.revision, patch: record.patch, retiredHeartbeat: previous.retiredHeartbeat,
+    });
+  }
+  await fs.writeFile(file, JSON.stringify({ ...saved, retiredHeartbeat: [{ source: 'defaults', settings: 'unexpected' }] }));
+  await assert.rejects(readControlOverlay(directory), { code: 'OPENCLAW_SETTING_GUARDED' });
+  assert.throws(() => validateControlPatch({ agents: { defaults: { heartbeat: defaults } } },
+    { nativeCapabilities: { enabled: true, acknowledged: true, settings: ['*'] } }), { code: 'OPENCLAW_SETTING_GUARDED' });
 });
 
 test('native settings cannot bypass the reviewed skill library, including a previous stored overlay', async t => {

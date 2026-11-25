@@ -12,6 +12,9 @@ const expected = [
     'dist/commands-registry.data-BY7QvkMn.mjs':['2c3d0bae58985654be4bd2abc534957689d4ddc20fefadd82bbe7900338c4b49','9168a8311b80b9378334c32e5bc7cf302e05bea7677b9f71984485468f7db252'],
     'dist/models-auth-status-DajZt9YG.mjs':['1806a063b5b857e20acfaf3fb924d8ccde8aaa87533359a5832e6e13db70444c','a31adfb4b4708932c5cd6f8a979efbe01ab2cce33a8f85d03e12d02fde0d4402'],
   }},
+  {id: 'admitted-tool-presentation-v1', files: {
+    'dist/attempt-transcript-helpers-BEGc_WgE.mjs':['4e4bdc40e686429d73c118c4ff5072fc6fcf34cd822401db9f1c693b688f97f4','318cb78c420356d44fa6bcdc454ba4e77e1d1bcb634d8475de98f22b6395e7ba'],
+  }},
 ];
 function matchesCommitment(overlay, index) {
   const {id, files} = expected[index], count = Object.keys(files).length;

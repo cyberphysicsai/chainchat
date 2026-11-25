@@ -59,7 +59,28 @@ POLICY_PATCHES = (
      'refreshAt:T}=await readProviderUsage({...C,awaitRefresh:Boolean(e.refreshUsage)});const E=[];',
      'const w=new Map();const T=void 0;const E=[];'),
 )
-PATCH_GROUPS = ((IDENTITY, METADATA_PATCHES), ('api-key-channel-auth-v1', POLICY_PATCHES))
+# Upstream 11.10 keeps displaying unavailable baseline definitions even with
+# a restricted prompt-hook policy. Present only the policy's direct schemas
+# while retaining its exact existing execution allowlist and deferred catalogue.
+TOOL_PRESENTATION_PATCHES = (
+    ('dist/attempt-transcript-helpers-BEGc_WgE.mjs',
+     '4e4bdc40e686429d73c118c4ff5072fc6fcf34cd822401db9f1c693b688f97f4',
+     '318cb78c420356d44fa6bcdc454ba4e77e1d1bcb634d8475de98f22b6395e7ba',
+     'const s=[...e.baseline.activeToolNames];e.session.setActiveToolsByName(s,r.callableToolNames);'
+     'return{activeToolNames:s,callableToolNames:r.callableToolNames,'
+     'effectiveTools:e.effectiveTools,uncompactedEffectiveTools:a,tools:o}',
+     'const admittedSchemas=e.toolsAllow===void 0?null:new Set(r.tools.map(tool=>tool.name));'
+     'const s=admittedSchemas?e.baseline.activeToolNames.filter(name=>admittedSchemas.has(name))'
+     ':[...e.baseline.activeToolNames];e.session.setActiveToolsByName(s,r.callableToolNames);'
+     'return{activeToolNames:s,callableToolNames:r.callableToolNames,'
+     'effectiveTools:admittedSchemas?e.effectiveTools.filter(tool=>admittedSchemas.has(tool.name)):e.effectiveTools,'
+     'uncompactedEffectiveTools:a,tools:o}'),
+)
+PATCH_GROUPS = (
+    (IDENTITY, METADATA_PATCHES),
+    ('api-key-channel-auth-v1', POLICY_PATCHES),
+    ('admitted-tool-presentation-v1', TOOL_PRESENTATION_PATCHES),
+)
 PATCHES = tuple(patch for _, group in PATCH_GROUPS for patch in group)
 DESCRIPTORS = [
     {'id': identity, 'upstreamVersion': VERSION,
