@@ -97,7 +97,19 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
     const probe = target.hostname === '127.0.0.1' && ['/startupz', '/readyz', '/v1/models'].includes(target.pathname);
     try {
       const response = await fetch(url, options);
-      if (probe) readinessProbes.set(target.pathname, { http: response.status });
+      if (probe) {
+        const observed = { http: response.status };
+        if (target.pathname !== '/v1/models' && Number(response.headers.get('content-length')) <= 4096) {
+          const body = await response.clone().json().catch(() => null);
+          const common = new Set(['startup-sidecars', 'agent-database-inspection', 'gateway-draining',
+            'child-runtime', 'state-database', 'plugin-reload', 'chat-startup', 'internal']);
+          if (common.has(body?.pendingReason)) observed.pending = body.pendingReason;
+          if (Array.isArray(body?.failing)) observed.failing = body.failing.slice(0, 8)
+            .map(reason => common.has(reason) ? reason : 'other');
+          for (const key of ['ready', 'ok', 'coreReady']) if (typeof body?.[key] === 'boolean') observed[key] = body[key];
+        }
+        readinessProbes.set(target.pathname, observed);
+      }
       return response;
     } catch (error) {
       if (probe) readinessProbes.set(target.pathname, { transport: error.name === 'TimeoutError' ? 'timeout' : 'unavailable' });
@@ -171,14 +183,16 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       pluginPath: path.join(application, 'openclaw/plugin'), onDiagnostic: recordDiagnostic },
     // Startup also uses this adapter for short-lived CLI helpers. Observe only
     // the authoritative Gateway entrypoint, without changing its permissions.
-    openclawFactory: options => createOpenClawGateway({ ...options, fetchImpl: fixtureFetch, spawnImpl: (...args) => {
-      const child = spawn(...args), argv = args[1];
+    openclawFactory: options => createOpenClawGateway({ ...options, fetchImpl: fixtureFetch, spawnImpl: (command, argv, options) => {
       if (Array.isArray(argv) && typeof argv[0] === 'string' &&
           path.resolve(argv[0]) === path.join(application, 'openclaw', 'gateway-bootstrap.mjs') &&
           path.basename(argv[1] || '') === 'openclaw.mjs' && argv[2] === 'gateway' && argv[3] === 'run') {
+        const child = spawn(command, argv, { ...options, env: { ...options.env,
+          OPENCLAW_LOG_LEVEL: 'info', OPENCLAW_GATEWAY_STARTUP_TRACE: '1' } });
         gatewayChild = child; gatewayStarts++; gatewayChildren.push(child);
+        return child;
       }
-      return child;
+      return spawn(command, argv, options);
     } }),
   }).catch(error => { throw fixtureFailure(error, 'OpenClaw fixture startup'); });
   await app.store.add(root, 'Tool Grant Fixture', true);
