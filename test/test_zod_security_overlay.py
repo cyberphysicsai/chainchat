@@ -23,9 +23,9 @@ class ZodSecurityOverlayTests(unittest.TestCase):
         return root, target
 
     def test_descriptor_refuses_modified_commit_file_list_and_target_before_io(self):
-        self.assertEqual(len(overlay.DESCRIPTOR['files']), 18)
-        self.assertEqual(len({row['path'] for row in overlay.DESCRIPTOR['files']}), 18)
-        for key, value in [('fixCommit', '0' * 40), ('upstreamVersion', '2026.11.2'), ('files', [])]:
+        self.assertEqual([row['path'] for row in overlay.DESCRIPTOR['files']],
+                         ['node_modules/chrome-devtools-mcp/build/src/third_party/index.js'])
+        for key, value in [('fixCommit', '0' * 40), ('upstreamVersion', '2026.11.3'), ('files', [])]:
             descriptor = {**overlay.DESCRIPTOR, key: value}
             with self.assertRaisesRegex(ValueError, 'reviewed commitment'):
                 overlay.apply_package('/missing', descriptor)
@@ -47,7 +47,7 @@ class ZodSecurityOverlayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='ct-zod-overlay-test-') as directory:
             root, target = self.package(directory)
             target.write_bytes(b'unchanged')
-            (root / 'package.json').write_text('{"name":"openclaw","version":"2026.11.2"}', encoding='utf-8')
+            (root / 'package.json').write_text('{"name":"openclaw","version":"2026.11.3"}', encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'exact reviewed OpenClaw'):
                 overlay.apply_package(root, overlay.DESCRIPTOR)
             self.assertEqual(target.read_bytes(), b'unchanged')

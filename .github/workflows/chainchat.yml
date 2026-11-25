@@ -10,7 +10,7 @@ on:
         description: 'Full release acceptance or focused native diagnosis'
         type: choice
         default: full
-        options: [full, byok-reliability, native-settings, tool-grants, live-deepseek]
+        options: [full, byok-reliability, native-settings, tool-grants, runtime-upgrade, runtime-history, runtime-queue, runtime-actions, runtime-media, live-deepseek]
 permissions:
   contents: read
 jobs:
@@ -52,15 +52,33 @@ jobs:
           python installer/security_overlays.py --application . --cache "$RUNNER_TEMP/chainchat-security-overlays"
           python installer/runtime_compatibility.py --application .
           python installer/check_upstream.py > "$RUNNER_TEMP/chainchat-upstream-check.json"
-          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert [(row["id"],len(row["files"])) for row in overlays]==[("early-hook-input-provenance-v2",2),("api-key-channel-auth-v1",3)]'
+          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert [(row["id"],len(row["files"])) for row in overlays]==[("early-hook-input-provenance-v2",2),("api-key-channel-auth-v1",3),("admitted-tool-presentation-v1",1),("managed-system-context-v1",1),("managed-delivery-session-v1",1),("managed-generated-media-delivery-v1",1)]'
           node openclaw/launcher.mjs --check
           echo "CT_OPENCLAW_PACKAGE=$GITHUB_WORKSPACE/openclaw/runtime/node_modules/openclaw" >> "$GITHUB_ENV"
           echo "CT_OPENCLAW_NODE=$(node -p process.execPath)" >> "$GITHUB_ENV"
-      - name: Install previous runtime only for real upgrade acceptance
+      - name: Install the previous pinned runtimes for real upgrade acceptance
+        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'full' || inputs.suite == 'runtime-upgrade'
+        env:
+          CT_CI_SHARD: ${{ matrix.shard }}
+          CT_CI_SUITE: ${{ inputs.suite }}
+        shell: bash
         run: |
+          set -euo pipefail
+          upgrade_shard=$(node --input-type=module -e 'import fs from "node:fs"; const files=fs.readdirSync("test",{withFileTypes:true}).filter(file=>file.isFile()&&file.name.endsWith(".test.mjs")).map(file=>file.name).sort(); const index=files.indexOf("native-upgrade.integration.test.mjs"); if(index<0)process.exit(1); console.log(index%4);')
+          if [[ "$CT_CI_SUITE" != "runtime-upgrade" && "$upgrade_shard" != "$CT_CI_SHARD" ]]; then exit 0; fi
           python -c 'import json; from pathlib import Path; root=Path("test/fixtures/previous-openclaw"); package=json.loads((root/"package.json").read_text()); lock=json.loads((root/"package-lock.json").read_text()); previous=lock["packages"]["node_modules/openclaw"]; assert package["dependencies"]["openclaw"]=="2026.10.9"; assert previous["version"]=="2026.10.9"; assert previous["resolved"]=="https://registry.npmjs.org/openclaw/-/openclaw-2026.10.9.tgz"; assert previous["integrity"]=="sha512-KbIl0/7an0/nKBo92FnJg7LFcEpFVQyOgSRfHNE9yxELg1Ebql7BmBsdLL+1dDOLZnQtuwjt6Hy45CCrmYdJNA=="'
           node "$CT_BOOTSTRAP_NPM_CLI" ci --ignore-scripts --omit=dev --prefix test/fixtures/previous-openclaw
           python -c 'import json,os; from pathlib import Path; root=Path("test/fixtures/previous-openclaw/node_modules/openclaw").resolve(); assert json.loads((root/"package.json").read_text())["version"]=="2026.10.9"; stream=open(os.environ["GITHUB_ENV"],"a",encoding="utf-8"); stream.write("CT_OPENCLAW_LEGACY_PACKAGE="+str(root)+"\n"); stream.close()'
+          previous=df50c9359afb9092e29596a0f69edeef0929dcbd
+          git fetch --no-tags --depth=1 origin "$previous"
+          test "$(git rev-parse FETCH_HEAD)" = "$previous"
+          fixture="$RUNNER_TEMP/chainchat-113-upgrade-fixture"
+          mkdir "$fixture"
+          git show "${previous}:openclaw/runtime/package.json" > "$fixture/package.json"
+          git show "${previous}:openclaw/runtime/package-lock.json" > "$fixture/package-lock.json"
+          python -c 'import json,sys; from pathlib import Path; lock=json.loads((Path(sys.argv[1])/"package-lock.json").read_text()); pin=lock["packages"]["node_modules/openclaw"]; assert pin["version"]=="2026.11.3" and pin["integrity"]=="sha512-FBq/q0TCaoA2b7qfdV0q81fHhI6RBB1zAQfJQREc1u2TlK5khVgCUsAlXskLWthyVqRz5PWEj+oOmfYgK58dHg==" and pin["resolved"]=="https://registry.npmjs.org/openclaw/-/openclaw-2026.11.3.tgz"' "$fixture"
+          node "$CT_BOOTSTRAP_NPM_CLI" ci --ignore-scripts --omit=dev --prefix "$fixture"
+          echo "CT_OPENCLAW_PREVIOUS_PACKAGE=$fixture/node_modules/openclaw" >> "$GITHUB_ENV"
       - name: Install the locked isolated browser for native action acceptance
         run: |
           node --input-type=commonjs -e 'const r=require("node:module").createRequire(process.env.CT_OPENCLAW_PACKAGE+"/package.json"); const p=require("node:path"); require("node:child_process").execFileSync(process.execPath,[p.join(p.dirname(r.resolve("playwright-core/package.json")),"cli.js"),"install","--with-deps","chromium"],{stdio:"inherit"}); require("node:fs").appendFileSync(process.env.GITHUB_ENV,"CT_BROWSER_EXECUTABLE="+r("playwright-core").chromium.executablePath()+"\n");'
@@ -117,7 +135,17 @@ jobs:
           if [[ "$CT_CI_SUITE" == "byok-reliability" ]]; then
             node --test test/openclaw-reliability.integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "tool-grants" ]]; then
-            node --test test/openclaw-tools-ui.integration.test.mjs test/tool-authority.test.mjs test/host-process-context.test.mjs test/chat-tools-ui.test.mjs test/native-settings-integration.test.mjs
+            node --test test/openclaw-tools-ui.integration.test.mjs test/tool-authority.test.mjs test/host-process-context.test.mjs test/chat-tools-ui.test.mjs test/native-settings-integration.test.mjs test/native-media-completion.test.mjs test/native-media-task-bindings.test.mjs
+          elif [[ "$CT_CI_SUITE" == "runtime-queue" ]]; then
+            node --test test/openclaw-queued-input.integration.test.mjs
+          elif [[ "$CT_CI_SUITE" == "runtime-media" ]]; then
+            node --test test/native-async-media.integration.test.mjs
+          elif [[ "$CT_CI_SUITE" == "runtime-actions" ]]; then
+            node --test --test-concurrency=1 test/managed-automation.native.test.mjs test/native-async-media.integration.test.mjs
+          elif [[ "$CT_CI_SUITE" == "runtime-history" ]]; then
+            node --test --test-concurrency=1 test/openclaw-queued-input.integration.test.mjs test/gateway-bootstrap.test.mjs test/openclaw-native-compaction.integration.test.mjs test/native-async-media.integration.test.mjs
+          elif [[ "$CT_CI_SUITE" == "runtime-upgrade" ]]; then
+            node --test --test-concurrency=1 test/native-upgrade.integration.test.mjs test/openclaw-native-heartbeat.integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "native-settings" ]]; then
             node --test test/openclaw-native-controls.integration.test.mjs test/native-channel-routes.test.mjs test/native-settings-integration.test.mjs test/native-config-form.test.mjs test/native-settings-browser.test.mjs test/managed-browser-service.test.mjs test/tool-authority.test.mjs test/chat-errors.test.mjs
           else
@@ -280,7 +308,7 @@ jobs:
           python installer/security_overlays.py --application . --cache "$RUNNER_TEMP/chainchat-security-overlays"
           python installer/runtime_compatibility.py --application .
           python installer/check_upstream.py > "$RUNNER_TEMP/chainchat-upstream-check.json"
-          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert [(row["id"],len(row["files"])) for row in overlays]==[("early-hook-input-provenance-v2",2),("api-key-channel-auth-v1",3)]'
+          python -c 'import json,os; from pathlib import Path; checked=json.loads((Path(os.environ["RUNNER_TEMP"])/"chainchat-upstream-check.json").read_text()); pins=json.loads(Path("openclaw/upstream-lock.json").read_text()); overlays=checked["runtimeCompatibilityOverlays"]; assert checked["consistent"] is True and checked["upstreamSourcePatched"] is True; assert overlays==pins["runtimeCompatibilityOverlays"]; assert [(row["id"],len(row["files"])) for row in overlays]==[("early-hook-input-provenance-v2",2),("api-key-channel-auth-v1",3),("admitted-tool-presentation-v1",1),("managed-system-context-v1",1),("managed-delivery-session-v1",1),("managed-generated-media-delivery-v1",1)]'
           node openclaw/launcher.mjs --check
           echo "CT_OPENCLAW_PACKAGE=$GITHUB_WORKSPACE/openclaw/runtime/node_modules/openclaw" >> "$GITHUB_ENV"
           echo "CT_OPENCLAW_NODE=$(node -p process.execPath)" >> "$GITHUB_ENV"

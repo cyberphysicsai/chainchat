@@ -12,7 +12,7 @@ import net from "node:net";
 import path from "node:path";
 import { once } from "node:events";
 import { validateProvider, validateNativeProvider, assertCredentialIsolation, isRetiredProviderCredential, isUnsupportedModelCredential } from "../lib/providers.mjs";
-import { createNativeControls, readControlOverlay, mergeControlOverlay, validateControlPatch, NATIVE_PREFERENCES, controlSessionKey, redactNativeControl } from "../lib/openclaw-controls.mjs";
+import { createNativeControls, readControlOverlay, mergeControlOverlay, validateControlPatch, controlOverlayRecord, NATIVE_PREFERENCES, controlSessionKey, redactNativeControl } from "../lib/openclaw-controls.mjs";
 import { createPrivateNativeServices } from '../lib/openclaw-services.mjs';
 import { createNativeBrowserInspector } from '../lib/native-browser-inspection.mjs';
 import { safeInvocationError, invocationError } from '../lib/runtime-errors.mjs';
@@ -24,7 +24,6 @@ import {parseNativeMediaCompletion} from '../lib/native-media-completion.mjs';
 import {NativeSecrets,nativeSecretTargets} from '../lib/native-secrets.mjs';
 import {createNativeChannels} from '../lib/native-channels.mjs';
 import {loadOfficialChannelCatalogue,mergeNativeChannelCatalogue} from '../lib/native-channel-catalogue.mjs';
-import {createNativeHeartbeatScratch,readNativeHeartbeatMonitor} from '../lib/native-heartbeat-scratch.mjs';
 import {waitForNativeSessionIdle} from '../lib/native-session-idle.mjs';
 import {assertManagedRuntime} from './runtime-security.mjs';
 import {isRemovedNativeModel, isRemovedNativeProvider, modelRouteForConfig} from './plugin/model-route.mjs';
@@ -35,7 +34,7 @@ import {createRuntimeStderrEvidence} from './runtime-stderr-evidence.mjs';
 
 import { CONTEXT_POLICY } from './plugin/compaction.mjs';
 
-export const OPENCLAW_VERSION = "2026.11.3";
+export const OPENCLAW_VERSION = "2026.11.10";
 const MAX_BYTES = 24 * 1024 * 1024;
 const PROVIDERS = Object.freeze({
   openai: { id: "chainchat-openai", api: "openai-responses", prefix: "/openai/v1", endpoint: "/responses" },
@@ -84,6 +83,37 @@ export async function readNativeReviewedCandidate(broker, claimId, generatedText
       throw fail('OpenClaw ended this turn without an approved final reply.', 'OPENCLAW_EMPTY_RESPONSE');
     throw error;
   }
+}
+export function createNativeCommittedTextWitness({ sessionKey, runId, signal }) {
+  let row, terminal = false, success = false;
+  const managed = typeof sessionKey === 'string' && /^agent:main:chainchat-control:[a-f0-9]{64}$/.test(sessionKey) &&
+    typeof runId === 'string' && runId.length > 0 && runId.length <= 256;
+  return {
+    observe(event) {
+      const payload = event?.payload;
+      if (!managed || signal?.aborted !== false || terminal || payload?.sessionKey !== sessionKey || payload.runId !== runId) return;
+      if (event.event === 'chat' && ['final', 'error', 'aborted'].includes(payload.state)) {
+        terminal = true;
+        success = payload.state === 'final' && payload.stopReason === 'stop';
+        return;
+      }
+      const message = payload.message, metadata = message?.__openclaw;
+      if (event.event !== 'session.message' || message?.role !== 'assistant' || metadata?.runId !== runId ||
+          message.stopReason !== 'stop' || message.display === false || message.openclawStreamFallback || row === null) return;
+      const content = message.content;
+      const text = typeof content === 'string' ? content : Array.isArray(content) && content.length <= 32 &&
+        content.every(block => block?.type === 'text' && typeof block.text === 'string') ? content.map(block => block.text).join('\n') : '';
+      if (!text.trim() || Buffer.byteLength(text, 'utf8') > 128 * 1024) return;
+      if (metadata.id !== undefined && payload.messageId !== undefined && metadata.id !== payload.messageId) return;
+      const id = typeof payload.messageId === 'string' && payload.messageId.length <= 256 ? payload.messageId : null;
+      if (!row) row = { id, text };
+      else if (!id || row.id !== id || row.text !== text) row = null;
+    },
+    read(reviewed) {
+      return success && signal?.aborted === false && reviewed?.receipt?.reviewed === true &&
+        reviewed.candidate === row?.text ? row?.text : undefined;
+    },
+  };
 }
 function nativeControlWatchdogMs(requestTimeoutMs) {
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 100 || requestTimeoutMs > 600000)
@@ -674,7 +704,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
           // overrides; it must never silently charge a saved native profile.
           utilityModel: '',
           compaction: { memoryFlush: { enabled: false } },
-          heartbeat: { every: "0m" }, maxConcurrent: 1 } },
+          maxConcurrent: 1 } },
         // Upstream defaults to remote OpenAI embeddings and on-start sync.
         // Native memory remains available only by explicit owner opt-in.
         memory:{search:{enabled:false}},
@@ -691,7 +721,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
         logging: { level: "error", consoleLevel: "error" },
         plugins: { enabled: true, allow: [...new Set(["cypher-tempre-poi", "browser",...bundledPlugins])], slots: { contextEngine: "cypher-tempre-poi" }, load: { paths: [plugin] }, entries: {
           browser: { enabled: true },
-          "cypher-tempre-poi": { enabled: true, llm:{allowAgentIdOverride:true}, hooks: { allowConversationAccess: true, allowPromptInjection: true }, config: {
+          "cypher-tempre-poi": { enabled: true, llm:{allowAgentIdOverride:true}, hooks: { allowConversationAccess: true, allowPromptModification: true }, config: {
             brokerUrl: brokerUrl.href.replace(/\/$/, ""), brokerTokenEnv: "CHAINCHAT_BROKER_TOKEN",...(mediaRoot?{mediaRoot:path.resolve(mediaRoot)}:{}) } } } } };
       const controlledConfiguration = mergeControlOverlay(baseConfiguration, managedServices);
       controlledConfiguration.plugins.allow=[...new Set([...baseConfiguration.plugins.allow,...(controlledConfiguration.plugins.allow||[])])];
@@ -843,7 +873,8 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       const current = await readControlOverlay(directory);
       if (current.revision !== revision) throw fail('Settings changed. Refresh before saving.', 'OPENCLAW_CONFIG_STALE', 409);
       const next = { version: 1, patch, revision: createHash('sha256').update(JSON.stringify(patch)).digest('hex') };
-      await atomicJson(path.join(directory, 'controls.json'), next); return next;
+      await atomicJson(path.join(directory, 'controls.json'), controlOverlayRecord({ ...next, retiredHeartbeat: current.retiredHeartbeat }));
+      return next;
     },
     async applyOverlay(patch, {baseHash} = {}) {
       if (active) throw fail('Wait for the current model run before applying settings.', 'OPENCLAW_CONTROL_BUSY', 409);
@@ -895,7 +926,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     } catch(error) {
       await abortStagedSecrets();
       pendingOverlay=previous.patch;
-      try {await atomicJson(path.join(directory,'controls.json'),previous);await stopChild();await start();}
+      try {await atomicJson(path.join(directory,'controls.json'),controlOverlayRecord(previous));await stopChild();await start();}
       catch {await stopChild();throw fail('Native configuration recovery requires local inspection. The owned runtime was stopped.','OPENCLAW_CONFIG_RECOVERY_REQUIRED',503);}
       finally {pendingOverlay=null;}
       throw error;
@@ -1012,9 +1043,9 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       return !!(channel&&channel.enabled!==false&&(channel.accounts?channel.accounts[source.accountId]&&channel.accounts[source.accountId].enabled!==false:source.accountId===(channel.defaultAccount||'default')));
     }
     if(source.kind==='heartbeat') {
-      const row=(Array.isArray(config.agents?.list)?config.agents.list:Array.isArray(config.agents?.entries)?config.agents.entries:[]).find(agent=>agent.id===source.agentId);
-      if(!(row?.heartbeat||config.agents?.defaults?.heartbeat))return false;
-      try{return !!await readNativeHeartbeatMonitor(nativeRpc,source.agentId);}catch{return false;}
+      // The legacy heartbeat runner was retired in this OpenClaw release.
+      // Saved enrollment does not authorize a different automation source.
+      return false;
     }
     if(source.kind==='background') {
       const selected=await nativeRpc('sessions.describe',{key:source.nativeSessionKey,includeDerivedTitles:false,includeLastMessage:false});
@@ -1022,20 +1053,19 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     }
     return false;
   }
-  const heartbeatScratch=createNativeHeartbeatScratch({rpc:nativeRpc,listSources:ownerKey=>runBindings.list(ownerKey),inspectSource:inspectNativeSource,assertIsolation:checkServiceIsolation});
   async function nativeSources(input={}) {
-    const {identity:nativeIdentity,action='list',source,id,content,expectedRevision}=input;
+    const {identity:nativeIdentity,action='list',source,id}=input;
     const allowed=action==='scratch-get'?['identity','action','id']:action==='scratch-set'?['identity','action','id','content','expectedRevision']:action==='enroll'?['identity','action','source']:action==='revoke'?['identity','action','id']:['identity','action'];
     if(Object.keys(input).some(key=>!allowed.includes(key)))throw fail('Invalid native source action.','OPENCLAW_NATIVE_BINDING_REQUIRED',400);
     controlSessionKey(nativeIdentity);const ownerKey=nativeIdentity.agentId+':'+nativeIdentity.genesisHash.toLowerCase();
     await start();
     const result=async()=>({sources:await runBindings.list(ownerKey),available:await nativeSourceOptions()});
     if(action==='list')return result();
-    if(action==='scratch-get')return heartbeatScratch({ownerKey,id,action});
+    if(action==='scratch-get'||action==='scratch-set'||action==='enroll'&&source?.kind==='heartbeat')
+      throw fail('OpenClaw retired native heartbeat settings. Create a reviewed schedule in Automations.', 'OPENCLAW_HEARTBEAT_RETIRED', 409);
     if(action==='revoke'&&typeof id==='string'&&/^[a-f0-9]{64}$/u.test(id)){await runBindings.revoke(ownerKey,id);for(const row of dynamicRows)if(row.binding?.sourceId===id&&row.binding.ownerKey===ownerKey)row.abortNative();return result();}
     const grant=await nativeCapabilities(nativeIdentity);
     if(grant?.enabled!==true||grant.acknowledged!==true||grant.backgroundRuns!==true)throw fail('Native background source enrollment requires an explicit owner capability grant.','OPENCLAW_NATIVE_BINDING_REQUIRED',403);
-    if(action==='scratch-set')return heartbeatScratch({ownerKey,id,action,content,expectedRevision,canWrite:true});
     if(action==='enroll'){
       if(!source||Object.keys(source).some(key=>!['kind','agentId','channelId','accountId','nativeSessionKey'].includes(key)))throw fail('Invalid native source enrollment.','OPENCLAW_NATIVE_BINDING_REQUIRED',400);
       await runBindings.enroll({...source,ownerKey});
@@ -1046,10 +1076,8 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     const results=await Promise.allSettled([nativeRpc('agents.list',{}),nativeRpc('config.get',{}),nativeRpc('sessions.list',{limit:200,rowMode:'compact',configuredAgentsOnly:true,includeGlobal:false,includeUnknown:false,includeDerivedTitles:false,includeLastMessage:false})]);
     const roster=results[0].status==='fulfilled'?results[0].value:{},config=results[1].status==='fulfilled'?results[1].value.config||{}:{},nativeSessions=results[2].status==='fulfilled'?results[2].value:{};
     const valid=value=>typeof value==='string'&&value.length>0&&value.length<=2048&&!/[\0\r\n]/u.test(value);
-    const agents=(Array.isArray(roster.agents)?roster.agents:[]).slice(0,256).filter(row=>valid(row.id)&&row.id.length<=128).map(row=>{
-      const entry=(Array.isArray(config.agents?.list)?config.agents.list:Array.isArray(config.agents?.entries)?config.agents.entries:[]).find(agent=>agent.id===row.id);
-      return{id:row.id,...(valid(row.name)?{name:row.name.slice(0,256)}:{}),heartbeat:Boolean(entry?.heartbeat||config.agents?.defaults?.heartbeat)};
-    });
+    const agents=(Array.isArray(roster.agents)?roster.agents:[]).slice(0,256).filter(row=>valid(row.id)&&row.id.length<=128)
+      .map(row=>({id:row.id,...(valid(row.name)?{name:row.name.slice(0,256)}:{}),heartbeat:false}));
     const channels=[];
     for(const[channelId,entry]of Object.entries(config.channels||{})){if(!valid(channelId)||channelId.length>128||!entry||entry.enabled===false||typeof entry!=='object')continue;
       for(const[accountId,account]of Object.entries(entry.accounts||{[entry.defaultAccount||'default']:entry})){if(valid(accountId)&&accountId.length<=128&&account&&account.enabled!==false)channels.push({channelId,accountId});if(channels.length>=1024)break;}
@@ -1059,7 +1087,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       const agentId=valid(row.agentId)?row.agentId:/^agent:([^:]+):/u.exec(row.key)?.[1];if(!agents.some(agent=>agent.id===agentId))return[];
       return[{key:row.key,agentId,...(valid(row.label)?{label:row.label.slice(0,256)}:{})}];
     });
-    const available={agents,channels,sessions};checkServiceIsolation(available);return available;
+    const available={agents,channels,sessions,heartbeatRetired:true};checkServiceIsolation(available);return available;
   }
   async function saveNativeProviders() {
     await fs.mkdir(directory, {recursive:true,mode:0o700});
@@ -1388,7 +1416,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       contextWindow, maxOutputTokens: outputCeiling });
     await stopChild();
   }
-  async function nativeTurn(params, controller, { allowEmptyFinal = false } = {}) {
+  async function nativeTurn(params, controller, { allowEmptyFinal = false, committedTextWitness } = {}) {
     await assertEnforcementHealthy();
     const client = await nativeConnectionReady();
     let expectedRun = params.idempotencyKey, settled = false, done, acknowledged = false, bufferedText = '';
@@ -1400,6 +1428,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     // sibling event promise observed while propagating the admission failure.
     completed.catch(() => {});
     const listener = event => {
+      if (!settled) committedTextWitness?.observe(event);
       if (event.event !== 'chat' || event.payload?.sessionKey !== params.sessionKey) return;
       const payload = event.payload;
       if (!acknowledged && payload.runId !== expectedRun) { earlyEvents.push(event); return; }
@@ -1599,9 +1628,13 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       if (Object.keys(inherited).length && !native) await nativeRpc('sessions.patch', { key: sessionKey, ...inherited });
       if (native || nativeProvider) {
         await nativeRpc('sessions.patch', { key: sessionKey, model: nativeProvider ? config.model : `${PROVIDERS[config.provider].id}/route` });
-        const generated = await nativeTurn({ sessionKey, message: args.messages.at(-1).content, idempotencyKey: native?.goalOperation?.operationId || invocationId,
+        const inputId = native?.goalOperation?.operationId || invocationId;
+        const committedTextWitness = native?.kind === 'message' && !native.goalOperation && !native.intent
+          ? createNativeCommittedTextWitness({ sessionKey, runId: inputId, signal: controller.signal }) : undefined;
+        const generated = await nativeTurn({ sessionKey, message: args.messages.at(-1).content, idempotencyKey: inputId,
           ...(native?.intent?.kind==='session-goal-start'?{}:{queueMode:'followup'}),
-          deliver: false, ...(attachments.length?{attachments}:{}), ...(native?.intent ? { intent: native.intent } : {}), ...(native?.goalOperation ? { goalOperation: native.goalOperation } : {}) }, controller, {allowEmptyFinal:true});
+          deliver: false, ...(attachments.length?{attachments}:{}), ...(native?.intent ? { intent: native.intent } : {}), ...(native?.goalOperation ? { goalOperation: native.goalOperation } : {}) },
+          controller, {allowEmptyFinal:true, committedTextWitness});
         responseComplete = true; assertCredentialIsolation(config, generated); checkServiceIsolation(generated);
         let enforcement;
         const reviewed = typeof broker.readCandidate === 'function' ? await readNativeReviewedCandidate(broker, claim.claimId, generated.text) : null;
@@ -1613,6 +1646,16 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
           generated.text=typeof projected[0]?.text==='string'&&projected[0].text.trim()?projected[0].text:'Generated media is ready.';
           enforcement=await broker.assertDisplayCandidate({claimId:claim.claimId,display:generated.text});
         } else {
+          // The current native runtime may publish queued, transcript-owned
+          // text on session.message and close with a contentless chat final.
+          // Accept only the identical reviewed candidate, never a transcript
+          // row as standalone output authority.
+          const committedText = !generated.text?.trim() ? committedTextWitness?.read(reviewed) : undefined;
+          if (committedText) {
+            generated.text = committedText;
+            assertCredentialIsolation(config, generated);
+            checkServiceIsolation(generated);
+          }
           if (!generated.text?.trim()) throw fail('OpenClaw ended this turn without an approved final reply.','OPENCLAW_EMPTY_RESPONSE');
           enforcement = await broker.assertCandidate({ claimId: claim.claimId, candidate: generated.text });
         }

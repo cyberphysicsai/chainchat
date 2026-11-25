@@ -134,14 +134,16 @@ test('real native compaction persists only an exact PoI-approved summary and pre
     assert.deepEqual((await engine({ op: 'inspect', root, learning: false })).head, head, 'Compaction does not append a fake user exchange to the Timechain.');
     const settings = JSON.stringify(await manager.describeControls(identity));
     assert.equal(settings.includes(config.apiKey), false); assert.equal(settings.includes(broker.token), false);
-    // Native pressure must call our engine rather than silently degrading to
-    // legacy compaction. One large old turn can be summarized while both recent
-    // complete turns and the pending request remain intact.
-    for (const input of ['Please say hello.\n' + 'source-padding '.repeat(9000), 'Please say hello.', 'Please say hello.']) {
+    // Seed an old turn large enough to cross the reduced context budget after
+    // restart while leaving headroom for the 131k context's native overhead.
+    // Both recent complete turns and the pending request must survive.
+    for (const input of ['Please say hello.\n' + 'source-padding '.repeat(6400), 'Please say hello.', 'Please say hello.']) {
       assert.equal((await manager.generate(config, { messages: [{ role: 'user', content: input }], maxTokens: 128,
         nativeControl: { kind: 'message', sessionKey } }, context(input))).text, answer);
+      phases.push('pressure-history-turn');
     }
     await manager.close(); manager = create(64000); history = registerHistory();
+    phases.push('reduced-context-window');
     const automaticBefore = summaries.length, pendingMarker = 'CT_PENDING_ONLY_CURRENT_BOUNDARY', finalInput = `Please say hello. ${pendingMarker}`;
     assert.equal((await manager.generate(config, { messages: [{ role: 'user', content: finalInput }], maxTokens: 128,
       nativeControl: { kind: 'message', sessionKey } }, context(finalInput))).text, answer);

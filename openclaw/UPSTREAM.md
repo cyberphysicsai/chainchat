@@ -2,8 +2,8 @@
 
 OpenClaw is a pinned runtime dependency, not a copied source tree. Most ChainChat
 changes live in this application's plugin, launcher, adapter and UI. One explicit
-metadata-only overlay forwards existing `params.inputProvenance` and
-`params.currentSourceTurnId` into the same two early hook contexts in the
+metadata-only overlay forwards existing `inputProvenance` and the upstream
+channel-source turn identifier into the two early hook contexts in the
 extracted runtime. The original npm archive/SRI remains
 unchanged; the installed files have separately committed original and final
 SHA-256 values. A separate API-key policy overlay holds built-in channel
@@ -12,7 +12,7 @@ package. The canonical Timechain engine has its own
 independent source commitment and compatibility tests.
 
 Two security backports have separate installed-file commitments:
-`runtimeSecurityOverlays` covers the 18 embedded Zod files, while
+`runtimeSecurityOverlays` covers the remaining embedded Zod copy in Chrome DevTools MCP, while
 `npmSecurityOverlays` covers ten files in npm's private dependency tree.
 The Glob default-entry shims use its same-version raw exports; its raw walker
 and standalone Minimatch retain the existing APIs with reviewed upstream fixes.
@@ -43,19 +43,31 @@ in the same file. Setup refuses a different upstream version or damaged archive.
 Windows uses the official embeddable CPython 3.15.2 archive. macOS and Linux
 use Astral's CPython 3.15.2 standalone builds from its 20261026 release.
 
-`runtimeCompatibilityOverlays` records two exact groups for OpenClaw 2026.11.3.
+`runtimeCompatibilityOverlays` records six exact groups for OpenClaw 2026.11.10.
 `early-hook-input-provenance-v2` covers two early hook files.
 `api-key-channel-auth-v1` covers the shared raw `/login` dispatch, built-in
-command registry and native auth-status handler. The installer validates all
-five inputs before publishing any replacement and accepts exact original or
-exact reviewed output bytes. Launcher doctor and Gateway require all five
-final hashes before startup. The metadata overlay preserves typed
+command registry and native auth-status handler. `admitted-tool-presentation-v1`
+keeps the native turn's visible tool definitions inside its computed callable
+set. Deferred tools stay deferred. `managed-system-context-v1` keeps the managed
+PoI engine's fresh system context in the system message instead of saving it as a
+session prompt update. `managed-delivery-session-v1` passes the validated managed
+session to the outgoing-message hook for scheduled and channel sends. The plugin
+independently checks the exact delivery permit. `managed-generated-media-delivery-v1`
+routes typed generated-media completion to the managed owner's review before
+display or delivery. The installer validates each input
+before replacement and accepts exact original or reviewed output bytes. Launcher
+doctor and Gateway require all final hashes before startup. The metadata overlay preserves typed
 asynchronous task provenance and original client-nonce correlation at mandatory
 early admission; message text or transport acknowledgment grants no authority.
 On each upstream update, inspect the public hook contract and remove the overlay
 when upstream supplies both fields, or
 deliberately review new exact files and anchors. Never apply fuzzy replacements
 to a different release.
+
+For a queued managed reply, OpenClaw can send the committed assistant message
+separately from its empty completion frame. ChainChat correlates both events
+with the current run and verifies the exact text against its PoI receipt before
+displaying the reply.
 
 An update is a reviewed release, not an unattended merge of executable code:
 

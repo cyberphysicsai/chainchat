@@ -11,6 +11,7 @@ import { createOpenClawGateway } from '../openclaw/gateway.mjs';
 import { createPoIBroker } from '../openclaw/broker.mjs';
 import { NativeMediaStore } from '../lib/native-media-store.mjs';
 import { createNativeOutputMedia } from '../lib/native-output-media.mjs';
+import { parseNativeMediaCompletion } from '../lib/native-media-completion.mjs';
 import { engine } from '../lib/engine.mjs';
 import { DIMENSIONS, FRUITS } from '../lib/providers.mjs';
 import { currentCanonicalSkill } from '../lib/canonical-skill.mjs';
@@ -23,9 +24,9 @@ test('actual native image jobs deliver reviewed owned output and report failed j
   skip: !packageRoot || !nodePath ? 'Set the pinned native runtime for asynchronous media acceptance.' : false, timeout: 360000,
 }, async t => {
   const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ct-native-async-media-')));
-  const root = path.join(directory, 'agent'), gatewayRoot = path.join(directory, 'gateway'), diagnostics = [], reviews = [], completions = [], calls = [];
+  const root = path.join(directory, 'agent'), gatewayRoot = path.join(directory, 'gateway'), diagnostics = [], reviews = [], completions = [], calls = [], admissionTrace = [];
   const mediaStore = new NativeMediaStore(path.join(directory, 'owned')), canonicalSkill = (await currentCanonicalSkill()).skill;
-  let manager, broker, issued = false, imageCalls = 0, actualAsyncStarted = false, toolOutcomes = [], failureMode = false, completionBaseline = 0, phase = 'setup';
+  let manager, broker, relay, issued = false, imageCalls = 0, actualAsyncStarted = false, toolOutcomes = [], failureMode = false, completionBaseline = 0, phase = 'setup';
   const custody = createNativeOutputMedia({ nativeStateDirectory: path.join(gatewayRoot, 'native-state'), mediaStore,
     verifyCompletion: (proof, expected) => broker.verifyNativeMediaTask(proof, expected) });
   const acknowledgement = 'The native image task has started. I will wait for its reviewed result.';
@@ -45,12 +46,19 @@ test('actual native image jobs deliver reviewed owned output and report failed j
       response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ created: 1, data: [{ b64_json: image.toString('base64') }] })); return;
     }
     assert.equal(request.url, '/v1/chat/completions');
-    const context = body.messages.map(message => typeof message.content === 'string' ? message.content : (message.content || []).map(part => part.text || '').join('\n')).join('\n');
+    const messages = body.messages.map(message => ({ role: message.role,
+      text: typeof message.content === 'string' ? message.content : (message.content || []).map(part => part.text || '').join('\n') }));
+    const context = messages.map(message => message.text).join('\n');
     if (context.startsWith('Write an Activity recap for someone scanning their tasks: what was done here, and where it stands now.')) {
       assert.equal(body.tools?.length || 0, 0);
       response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ id: 'native-media-recap', choices: [{ index: 0, message: { role: 'assistant', content: 'A local generated-image task is being reviewed.' }, finish_reason: 'stop' }] })); return;
     }
-    assert.equal(context.split(canonicalSkill).length - 1, 1, 'Every actual agent iteration receives one exact canonical skill.');
+    const policyCount = context.split(canonicalSkill).length - 1;
+    if (policyCount !== 1) t.diagnostic(JSON.stringify({ phase, imageCalls, completions: completions.length, policyCount,
+      model: body.model, stream: body.stream === true, tools: (body.tools || []).map(tool => tool.function?.name || tool.name),
+      messages: messages.slice(0, 4).map(({ role, text }) => ({ role, length: text.length,
+        prefix: text.replaceAll('sk-synthetic-async-media-key', '[SYNTHETIC KEY]').slice(0, 180) })) }));
+    assert.equal(policyCount, 1, 'Every actual agent iteration receives one exact canonical skill.');
     const starting = !issued; issued = true;
     const completed = completions.length > completionBaseline;
     Object.assign(call, { starting, completed, toolResults: body.messages.filter(message => message.role === 'tool').length });
@@ -87,6 +95,7 @@ test('actual native image jobs deliver reviewed owned output and report failed j
   provider.listen(0, '127.0.0.1'); await once(provider, 'listening');
   t.after(async () => {
     await manager?.close();
+    relay?.closeAllConnections(); if (relay) await new Promise(resolve => relay.close(resolve));
     await broker?.close(); provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve));
     assert.ok(directory.startsWith(path.resolve(os.tmpdir()) + path.sep)); await fs.rm(directory, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
   });
@@ -99,13 +108,39 @@ test('actual native image jobs deliver reviewed owned output and report failed j
     outputAssetMetadata: async (captured, { assertCurrent }) => Promise.all(captured.assets.map(async asset => { await assertCurrent(); return (await mediaStore.read(asset.assetId)).metadata; })),
     review: async (_config, args) => { reviews.push(args); return { approved: true, scores, fruitages, usedRings: [], rationale: 'Synthetic local fixture reviews a peaceful image-generation action and confirms only actual native status observations.' }; } });
   await broker.start();
+  relay = http.createServer(async (request, response) => {
+    try {
+      const chunks = []; let bytes = 0;
+      for await (const chunk of request) { bytes += chunk.length; if (bytes > 4 * 1024 * 1024) throw new Error('Fixture request is too large.'); chunks.push(chunk); }
+      const raw = Buffer.concat(chunks), packet = JSON.parse(raw);
+      const forwarded = await fetch(broker.url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30000),
+        headers: { authorization: request.headers.authorization, 'content-type': 'application/json' }, body: raw });
+      const result = Buffer.from(await forwarded.arrayBuffer());
+      const provenance = packet.nativeContext?.inputProvenance, input = typeof packet.input === 'string' ? packet.input : '';
+      if (admissionTrace.length < 80 && ['admit', 'model_route', 'model_context', 'prepare', 'tool_result', 'finalize', 'end'].includes(packet.op)) {
+        const taskId = provenance?.sourceTool === 'image_generate' && provenance.sourceSessionKey?.startsWith('image_generate:')
+          ? provenance.sourceSessionKey.slice('image_generate:'.length) : null;
+        let exactEnvelope = false;
+        if (taskId) try { parseNativeMediaCompletion(input, { toolName: 'image_generate', taskId }); exactEnvelope = true; } catch {}
+        const reason = forwarded.ok ? '' : JSON.parse(result).code;
+        admissionTrace.push({ phase, op: packet.op, status: forwarded.status, hasInput: Boolean(input), hasSession: typeof packet.nativeContext?.sessionId === 'string',
+          typedImageSource: Boolean(taskId), exactEnvelope, protectedEnvelope: input.startsWith('OpenClaw runtime context:\n'),
+          interSessionEnvelope: input.startsWith('[Inter-session message]'), hasCompletion: input.includes('[Internal task completion event]'),
+          ...(/^[A-Z_]+$/.test(reason || '') ? { reason } : {}) });
+      }
+      response.writeHead(forwarded.status, { 'content-type': 'application/json' }); response.end(result);
+    } catch { response.writeHead(502, { 'content-type': 'application/json' }); response.end('{"allowed":false}'); }
+  });
+  relay.listen(0, '127.0.0.1'); await once(relay, 'listening');
+  const observed = Object.create(broker);
+  Object.defineProperty(observed, 'url', { get: () => `http://127.0.0.1:${relay.address().port}/v1/enforce` });
   const nativeCapabilities = { enabled: true, acknowledged: true, tools: ['image_generate'], settings: ['agents.defaults.mediaModels'], delegatedRuns: false, backgroundRuns: true };
   const config = { provider: 'native', tier: 'native', model: 'openai/fixture', contextWindow: 131072, maxOutputTokens: 4096 };
   const context = input => ({ root, input, purpose: 'candidate', learning: false, loadout: [], nativeIdentity: identity, nativeOwnerKey: ownerKey,
     nativeTools: ['image_generate'], authorize: async () => {}, autonomousCommit: true,
     toolAuthority: { enabled: true, acknowledged: true, tools: [], roots: [], networkHosts: [], allowExecution: false, nativeCapabilities },
     modelCapabilities: { reasoning: false, contextWindow: 131072, maxOutputTokens: 4096 } });
-  manager = createOpenClawGateway({ stateDir: gatewayRoot, packageRoot, nodePath, broker, mediaDirectory: mediaStore.root,
+  manager = createOpenClawGateway({ stateDir: gatewayRoot, packageRoot, nodePath, broker: observed, mediaDirectory: mediaStore.root,
     // The production child deliberately rejects inherited OPENCLAW_* flags.
     // Opt only this disposable process into upstream's literal-loopback image
     // test endpoint; production policy and inherited user credentials stay isolated.
@@ -175,7 +210,7 @@ test('actual native image jobs deliver reviewed owned output and report failed j
   } catch (error) {
     t.diagnostic(JSON.stringify({ code: error?.code || 'ASSERTION', phase, imageCalls, completions: completions.length, toolOutcomes,
       reviews: reviews.map(row => ({input: row.input.slice(0, 200), candidate: row.candidate.slice(0, 200)})),
-      requests: calls.map(({authorization, ...call}) => call) }));
+      requests: calls.map(({authorization, ...call}) => call), admissionTrace }));
     t.diagnostic(diagnostics.join('').slice(-7000)); throw error;
   }
 });

@@ -38,3 +38,15 @@ test('concrete native calls preserve reviewed parameters and reject ungranted or
   assert.throws(() => authorizeNativeTool(grant(), {...tool, params: JSON.parse('{"constructor":{"prototype":{}}}')}, {toolNames}));
   assert.throws(() => authorizeNativeTool(grant(), {...tool, params: {text: 'x'.repeat(524289)}}, {toolNames}));
 });
+test('generated media keeps ordinary task actions and holds alternate native delivery controls', () => {
+  const tools = ['image_generate', 'video_generate', 'music_generate', 'image'];
+  const snapshot = {...grant(), tools, backgroundRuns: true};
+  const admit = (name, params) => authorizeNativeTool(snapshot, {name, params, callId: 'synthetic-media'}, {toolNames: tools});
+  for (const params of [{prompt: 'Generate a calm sky'}, {action: 'generate', prompt: 'Generate a calm sky'}, {action: 'list'}, {action: 'status'}])
+    assert.deepEqual(admit('image_generate', params).params, params);
+  for (const action of ['deliver', 'review', '  SUPERSEDE '])
+    assert.throws(() => admit('image_generate', {action, taskId: 'synthetic-task'}), {code: 'NATIVE_CAPABILITY_DENIED'});
+  for (const name of tools.slice(0, 3))
+    assert.throws(() => admit(name, {prompt: 'Generate a calm sky', deliveryMode: 'review'}), {code: 'NATIVE_CAPABILITY_DENIED'});
+  assert.deepEqual(admit('image', {image: 'owned.jpg'}).params, {image: 'owned.jpg'});
+});

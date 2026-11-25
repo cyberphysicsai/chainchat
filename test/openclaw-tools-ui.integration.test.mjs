@@ -18,6 +18,8 @@ const enabled = process.env.CI === 'true' && runtimePackage && runtimeNode && ex
 const application = path.resolve(process.env.CT_CHAINCHAT_PACKAGE || fileURLToPath(new URL('..', import.meta.url)));
 const ANSWER = 'The disposable fixture request is complete. I will report only the verified local results.';
 const READ_MARKER = 'CHAINCHAT_UI_READ_MARKER', EXEC_MARKER = 'CHAINCHAT_UI_EXEC_MARKER';
+const EDIT_MARKER = 'CHAINCHAT_UI_EDIT_MARKER', WRITE_MARKER = 'CHAINCHAT_UI_WRITE_MARKER';
+const PROJECT_TOOLS = ['edit', 'exec', 'read', 'write'];
 
 function* strings(value) {
   if (typeof value === 'string') yield value;
@@ -58,7 +60,7 @@ function assertGrant(requests, expected) {
       'Static identity metadata must not contradict the current per-turn grant.');
     assert.equal(context.hostToolGrant.enabled, expected);
     assert.deepEqual(context.hostProcessContext.releaseReview, { semantic: true, native: true });
-    for (const name of ['read', 'exec']) {
+    for (const name of PROJECT_TOOLS) {
       assert.equal(context.hostProcessContext.toolScope.external.includes(name), expected,
         `Current verified scope must describe ${name} truthfully.`);
       if (expected) assert.ok(names.includes(name) || names.includes('tool_call'), `${name} must have a callable model schema.`);
@@ -80,7 +82,47 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
   const directory = await fs.realpath(await fs.mkdtemp(path.join(tempBase, 'ct-tools-ui-')));
   const root = path.join(directory, 'agent'), workspace = path.join(directory, 'workspace');
   let app, browser, upstream, gatewayChild, initialGatewayPid, gatewayBaselineStarts, browserBearer = '', gatewayStarts = 0;
-  const gatewayChildren = [], requests = [], reviews = [], nativeCalls = [], diagnostics = [], pageErrors = [];
+  const gatewayChildren = [], requests = [], reviews = [], nativeCalls = [], pageErrors = [];
+  const readinessProbes = new Map();
+  let diagnostics = '', criticalDiagnostics = '', diagnosticFragment = '';
+  const recordDiagnostic = chunk => {
+    diagnostics = (diagnostics + chunk).slice(-10000);
+    const lines = (diagnosticFragment + chunk).split('\n');
+    diagnosticFragment = lines.pop().slice(-1024);
+    for (const line of lines) if (/^\[chainchat\]/u.test(line))
+      criticalDiagnostics = (criticalDiagnostics + line.slice(0, 1024) + '\n').slice(-10000);
+  };
+  const fixtureFailure = (error, stage) => new Error(
+    `${stage} failed${error.code ? ` (${error.code})` : ''}: ${error.message}\n` +
+    `Isolated readiness probes: ${JSON.stringify(Object.fromEntries(readinessProbes))}\n` +
+    `ChainChat runtime events:\n${criticalDiagnostics || '[none recorded]'}\n` +
+    `Isolated runtime diagnostics:\n${diagnostics || '[none recorded]'}`,
+    { cause: error },
+  );
+  const fixtureFetch = async (url, options) => {
+    const target = new URL(typeof url === 'string' ? url : (url.url || url.href));
+    const probe = target.hostname === '127.0.0.1' && ['/startupz', '/readyz', '/v1/models'].includes(target.pathname);
+    try {
+      const response = await fetch(url, options);
+      if (probe) {
+        const observed = { http: response.status };
+        if (target.pathname !== '/v1/models' && Number(response.headers.get('content-length')) <= 4096) {
+          const body = await response.clone().json().catch(() => null);
+          const common = new Set(['startup-sidecars', 'agent-database-inspection', 'gateway-draining',
+            'child-runtime', 'state-database', 'plugin-reload', 'chat-startup', 'internal']);
+          if (common.has(body?.pendingReason)) observed.pending = body.pendingReason;
+          if (Array.isArray(body?.failing)) observed.failing = body.failing.slice(0, 8)
+            .map(reason => common.has(reason) ? reason : 'other');
+          for (const key of ['ready', 'ok', 'coreReady']) if (typeof body?.[key] === 'boolean') observed[key] = body[key];
+        }
+        readinessProbes.set(target.pathname, observed);
+      }
+      return response;
+    } catch (error) {
+      if (probe) readinessProbes.set(target.pathname, { transport: error.name === 'TimeoutError' ? 'timeout' : 'unavailable' });
+      throw error;
+    }
+  };
   const toolPlan = [];
   t.after(async () => {
     try { await browser?.close(); }
@@ -99,6 +141,7 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
   });
   await fs.mkdir(workspace);
   const readFile = path.join(workspace, 'read-input.txt'), execFile = path.join(workspace, 'exec-marker.txt');
+  const writeFile = path.join(workspace, 'write-marker.txt');
   await fs.writeFile(readFile, READ_MARKER + '\n');
   await engine({ op: 'init', root, name: 'Tool Grant Fixture' });
   const chainFile = path.join(root, 'chain', 'rings.jsonl'), genesisBytes = await fs.readFile(chainFile);
@@ -131,6 +174,12 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       return result;
     },
     review: async (_config, args) => {
+      if (args.reviewPurpose === 'action') {
+        const { tool } = JSON.parse(args.candidate);
+        if (tool.name === 'edit') assert.equal((await fs.readFile(readFile, 'utf8')).trim(), READ_MARKER);
+        if (tool.name === 'write') await assert.rejects(fs.stat(writeFile), { code: 'ENOENT' });
+        if (tool.name === 'exec') await assert.rejects(fs.stat(execFile), { code: 'ENOENT' });
+      }
       const result = { approved: true, decision: 'approve', usedRings: [],
         scores: Object.fromEntries(DIMENSIONS.map(key => [key, 240])),
         fruits: Object.fromEntries(FRUITS.map(key => [key, 240])),
@@ -138,19 +187,21 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       reviews.push({ args, result }); return result;
     },
     openclaw: { stateDir: path.join(directory, 'gateway'), packageRoot: runtimePackage, nodePath: runtimeNode,
-      pluginPath: path.join(application, 'openclaw/plugin'), onDiagnostic: line => diagnostics.push(line) },
+      pluginPath: path.join(application, 'openclaw/plugin'), onDiagnostic: recordDiagnostic },
     // Startup also uses this adapter for short-lived CLI helpers. Observe only
     // the authoritative Gateway entrypoint, without changing its permissions.
-    openclawFactory: options => createOpenClawGateway({ ...options, spawnImpl: (...args) => {
-      const child = spawn(...args), argv = args[1];
+    openclawFactory: options => createOpenClawGateway({ ...options, fetchImpl: fixtureFetch, spawnImpl: (command, argv, options) => {
       if (Array.isArray(argv) && typeof argv[0] === 'string' &&
           path.resolve(argv[0]) === path.join(application, 'openclaw', 'gateway-bootstrap.mjs') &&
           path.basename(argv[1] || '') === 'openclaw.mjs' && argv[2] === 'gateway' && argv[3] === 'run') {
+        const child = spawn(command, argv, { ...options, env: { ...options.env,
+          OPENCLAW_LOG_LEVEL: 'info', OPENCLAW_GATEWAY_STARTUP_TRACE: '1' } });
         gatewayChild = child; gatewayStarts++; gatewayChildren.push(child);
+        return child;
       }
-      return child;
+      return spawn(command, argv, options);
     } }),
-  });
+  }).catch(error => { throw fixtureFailure(error, 'OpenClaw fixture startup'); });
   await app.store.add(root, 'Tool Grant Fixture', true);
   app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
   const origin = `http://127.0.0.1:${app.server.address().port}`;
@@ -249,11 +300,10 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       assert.equal(verifiedContext(turn[0].body).hostToolGrant.nativeCapabilities.enabled, true);
       assertGatewayStable();
     });
-    await t.test('actual primary form Apply exposes and executes read and shell under both PoI reviews', async () => {
+    await t.test('actual primary form Apply exposes and executes project read, edit, write and shell under both PoI reviews', async () => {
       assertGatewayStable();
       await page.locator('#nativeToolsEnabled').check();
-      await page.locator('#nativeToolChoices [data-host-tool="read"]').check();
-      await page.locator('#nativeToolChoices [data-host-tool="exec"]').check();
+      for (const name of PROJECT_TOOLS) await page.locator(`#nativeToolChoices [data-host-tool="${name}"]`).check();
       await page.locator('#nativeToolRoots').fill(workspace);
       await page.locator('#nativeExecutionAllowed').check();
       await page.locator('#nativeToolsAcknowledged').check();
@@ -261,22 +311,28 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       await page.locator('#nativeToolsForm button[type="submit"]').click();
       const response = await saved, body = await response.json(); assert.equal(response.status(), 200, JSON.stringify(body));
       assert.equal(body.toolAuthority.grant.enabled, true);
-      assert.deepEqual([...body.toolAuthority.grant.tools].sort(), ['exec', 'read']);
+      assert.deepEqual([...body.toolAuthority.grant.tools].sort(), PROJECT_TOOLS);
       assert.deepEqual(body.toolAuthority.grant.roots, [workspace]);
       await page.waitForFunction(() => !document.getElementById('nativeToolsForm').inert && document.getElementById('nativeToolsEnabled').checked);
       assert.match(await page.locator('#nativeToolScopeStatus').textContent(), /saved|enabled|available|active|granted/i);
       const beforeNative = nativeCalls.length, beforeReviews = reviews.length;
-      toolPlan.push({ name: 'read', args: { path: readFile } },
+      const replacements = [{ oldText: READ_MARKER, newText: EDIT_MARKER }];
+      toolPlan.push({ name: 'read', args: { path: readFile, cursor: 0 } },
+        { name: 'edit', args: { path: readFile, edits: replacements } },
+        { name: 'write', args: { path: writeFile, content: WRITE_MARKER + '\n' } },
         { name: 'exec', args: { command: 'echo CHAINCHAT_UI_EXEC_MARKER > exec-marker.txt', workdir: workspace } });
-      const turn = await chat('Read the permitted fixture file, then run the permitted fixture marker command in its workspace.');
+      const turn = await chat('Read and edit the fixture file, write a second fixture file, and run the permitted marker command in its workspace.');
       assert.equal(toolPlan.length, 0); assertGrant(turn, true);
+      assert.equal((await fs.readFile(readFile, 'utf8')).trim(), EDIT_MARKER, 'Native edit must apply the exact reviewed replacement.');
+      assert.equal((await fs.readFile(writeFile, 'utf8')).trim(), WRITE_MARKER, 'Native write must create the exact reviewed contents.');
       assert.equal((await fs.readFile(execFile, 'utf8')).trim(), EXEC_MARKER, 'The real native shell must create the marker.');
       const results = turn.flatMap(item => item.body.messages.filter(message => message.role === 'tool'));
       assert.ok(results.some(message => JSON.stringify(message.content).includes(READ_MARKER)), 'Actual read output must return to the model.');
-      for (const name of ['read', 'exec']) {
+      for (const name of PROJECT_TOOLS) {
         const actionReview = reviews.slice(beforeReviews).find(({ args }) => args.reviewPurpose === 'action' &&
           JSON.parse(args.candidate).tool?.name === name);
         assert.ok(actionReview?.result.approved, `${name} must pass independent semantic action review.`);
+        if (name === 'edit') assert.deepEqual(JSON.parse(actionReview.args.candidate).tool.params, { path: readFile, edits: replacements });
         const native = nativeCalls.slice(beforeNative).find(({ request }) => request.op === 'evaluate_action' &&
           JSON.parse(request.output).tool?.name === name);
         assert.equal(native?.result.accepted, true, `${name} must pass the actual Python action gate.`);
@@ -314,6 +370,6 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
     assert.equal(runtime.healthy, true); assert.equal(runtime.enforcementHealthy, true);
     assert.deepEqual(pageErrors, []);
   } catch (error) {
-    throw new Error(`${error.message}\nIsolated runtime diagnostics:\n${diagnostics.join('').slice(-4000)}`, { cause: error });
+    throw fixtureFailure(error, 'Browser tool acceptance');
   }
 });

@@ -19,7 +19,10 @@ import {DIMENSIONS,FRUITS} from '../lib/providers.mjs';
 import {controlSessionKey} from '../lib/openclaw-controls.mjs';
 
 const execute=promisify(execFile),packageRoot=process.env.CT_OPENCLAW_PACKAGE,nodePath=process.env.CT_OPENCLAW_NODE;
-const legacyPackageRoot=process.env.CT_OPENCLAW_LEGACY_PACKAGE;
+const upgradeSources = [
+ {version:'2026.10.9', root:process.env.CT_OPENCLAW_LEGACY_PACKAGE, schemas:[20,25]},
+ {version:'2026.11.3', root:process.env.CT_OPENCLAW_PREVIOUS_PACKAGE, schemas:[22,27]},
+];
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const historyKey='agent:main:retained-upgrade-fixture',historyId='ac985b91-c236-4b2f-89ce-f9e5878315cf';
 const publicApiScript=String.raw`
@@ -75,13 +78,12 @@ function databaseFacts(directory){
   });
 }
 
-test('actual supported old native schema upgrade preserves history/auth and backup rollback before enforced chat',{
+for (const previous of upgradeSources) test(`actual native upgrade from ${previous.version} preserves history/auth and rollback before enforced chat`,{
  skip:!packageRoot||!nodePath?'Set the pinned native runtime for upgrade acceptance.':false,timeout:600000,
 },async t=>{
- assert.ok(legacyPackageRoot,'The full native suite requires CT_OPENCLAW_LEGACY_PACKAGE; migration must not silently skip.');
- assert.equal(JSON.parse(await fs.readFile(path.join(legacyPackageRoot,'package.json'),'utf8')).version,'2026.10.9');
- const legacyLock=JSON.parse(await fs.readFile(new URL('./fixtures/previous-openclaw/package-lock.json',import.meta.url),'utf8'));
- assert.equal(legacyLock.packages['node_modules/openclaw'].integrity,'sha512-KbIl0/7an0/nKBo92FnJg7LFcEpFVQyOgSRfHNE9yxELg1Ebql7BmBsdLL+1dDOLZnQtuwjt6Hy45CCrmYdJNA==');
+ const legacyPackageRoot=previous.root;
+ assert.ok(legacyPackageRoot, `The full suite requires the verified OpenClaw ${previous.version} upgrade fixture.`);
+ assert.equal(JSON.parse(await fs.readFile(path.join(legacyPackageRoot,'package.json'),'utf8')).version,previous.version);
  const directory=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ct-native-upgrade-'))),state=path.join(directory,'gateway');
  let manager,broker,provider;const diagnostics=[],calls=[];let reviews=0,phase='seed';
  t.after(async()=>{await manager?.close();await broker?.close();provider?.closeAllConnections();if(provider)await new Promise(resolve=>provider.close(resolve));
@@ -92,7 +94,7 @@ test('actual supported old native schema upgrade preserves history/auth and back
  await fs.writeFile(path.join(state,'gateway.json'),JSON.stringify(oldConfiguration),{mode:0o600});
  const script=path.join(directory,'public-fixture.mjs');await fs.writeFile(script,publicApiScript,{mode:0o600});
  const before=await publicSnapshot(script,legacyPackageRoot,state,'seed');assert.equal(before.eventCount,3);assert.equal(before.sessionId,historyId);
- const originalFacts=databaseFacts(state);assert.deepEqual(originalFacts.map(row=>row.version),[20,25]);assert.ok(originalFacts.every(row=>row.integrityOk&&row.meta.role===row.role&&row.meta.schema_version===row.version));
+ const originalFacts=databaseFacts(state);assert.deepEqual(originalFacts.map(row=>row.version),previous.schemas);assert.ok(originalFacts.every(row=>row.integrityOk&&row.meta.role===row.role&&row.meta.schema_version===row.version));
  const originalFiles=new Map();for(const name of ['gateway.json','workspace/sentinel.txt',...originalFacts.map(row=>row.file)])originalFiles.set(name,sha(await fs.readFile(path.join(state,name))));
  const root=path.join(directory,'canonical-agent');await engine({op:'init',root,registryRoot:root,name:'Native migration acceptance'});
  const initial=await engine({op:'inspect',root,registryRoot:root,learning:false}),identity={agentId:'migration-fixture',genesisHash:initial.genesis.hash};
@@ -105,7 +107,7 @@ test('actual supported old native schema upgrade preserves history/auth and back
  manager=createOpenClawGateway({stateDir:state,packageRoot,nodePath,broker,pluginPath:fileURLToPath(new URL('../openclaw/plugin',import.meta.url)),onDiagnostic:line=>diagnostics.push(line)});
  try{
   phase='upgrade-and-start';await manager.start();assert.equal(calls.length,0,'Maintenance and readiness must not call a model.');
-  const current=databaseFacts(state);assert.deepEqual(current.map(row=>row.version),[22,27]);assert.ok(current.every(row=>row.integrityOk&&row.meta.role===row.role&&row.meta.schema_version===row.version));
+  const current=databaseFacts(state);assert.deepEqual(current.map(row=>row.version),[40,42]);assert.ok(current.every(row=>row.integrityOk&&row.meta.role===row.role&&row.meta.schema_version===row.version));
   const after=await publicSnapshot(script,packageRoot,state,'after');assert.deepEqual(after,before,'Native session, raw events, content and synthetic auth survive real product maintenance.');
   assert.deepEqual(await fs.readFile(path.join(state,'workspace/sentinel.txt')),sentinel);
   const backupNames=(await fs.readdir(directory)).filter(name=>name.startsWith('.gateway-native-backup-'));assert.equal(backupNames.length,1);
@@ -124,14 +126,14 @@ test('actual supported old native schema upgrade preserves history/auth and back
   await manager.close();manager=null;
   phase='backup-rollback-rehearsal';assert.equal(manifest.entries.some(row=>row.type==='link'),false,'Synthetic rollback contains only owned regular files.');
   const restored=path.join(directory,'restored');await fs.cp(path.join(backup,'files'),restored,{recursive:true});
-  assert.deepEqual(databaseFacts(restored).map(row=>row.version),[20,25]);assert.ok(databaseFacts(restored).every(row=>row.integrityOk));
+  assert.deepEqual(databaseFacts(restored).map(row=>row.version),previous.schemas);assert.ok(databaseFacts(restored).every(row=>row.integrityOk));
   const restoredSnapshot=await publicSnapshot(script,legacyPackageRoot,restored,'restored');assert.deepEqual(restoredSnapshot,before);
   for(const [name,hash] of originalFiles)assert.equal(sha(await fs.readFile(path.join(restored,name))),hash,'Rollback copy restores '+name);
   phase='current-fast-path';let doctorCalls=0;
   const ticket=await prepareNativeUpgrade({directory:state,packageRoot,nodePath,runCommand:async(file,args,options)=>{if(args.includes('doctor')){doctorCalls++;throw new Error('Current state must not need Doctor.');}
    const done=await execute(file,args,{...options,windowsHide:true,encoding:'utf8',maxBuffer:1024*1024});return{exitCode:0,stdout:done.stdout};}});
   assert.equal(ticket.required,false);assert.equal(ticket.status,'current');assert.equal(doctorCalls,0);
-  t.diagnostic(JSON.stringify({oldSchema:[20,25],newSchema:[22,27],eventsPreserved:3,authSentinelPreserved:true,workspacePreserved:true,
+  t.diagnostic(JSON.stringify({oldSchema:previous.schemas,newSchema:[40,42],eventsPreserved:3,authSentinelPreserved:true,workspacePreserved:true,
    preOverlayBackupVerified:true,rollbackOldSdkReadVerified:true,currentSkippedDoctor:true,reviewedNativeChat:true,modelCalls:calls.length}));
  }catch(error){t.diagnostic(JSON.stringify({phase,code:/^[A-Z0-9_]+$/.test(error.code||'')?error.code:'UPGRADE_ACCEPTANCE_FAILED',modelCalls:calls.length,reviews}));throw error;}
 });

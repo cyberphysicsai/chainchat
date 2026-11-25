@@ -10,6 +10,19 @@ const snapshot = {
   browserRuntime: { state: 'available' },
 };
 
+test('a moved directory is indicated without exposing its path or losing independent grants', () => {
+  const unavailable = { ...snapshot, toolDirectories: { available: 0, unavailable: 1 } };
+  const view = chatToolAccess(unavailable, agent);
+  assert.equal(view.status, 'Project directory needs attention');
+  assert.match(view.detail, /1 saved project directory is unavailable or changed/);
+  assert.match(view.detail, /Shell and process execution grant on/);
+  assert.match(view.detail, /Update the paths and apply permissions in Tool access/);
+  assert.doesNotMatch(view.detail, /private-directory/);
+  assert.equal(chatToolActivity({ events: [{ ability: 'tool', status: 'held',
+    label: 'An approved project directory is unavailable or changed. Update the directory and apply permissions in Tool access.' }] }, true),
+  'Project directory needs attention · open Tool access');
+});
+
 test('saved tool grants are separate from runtime health, memory pause, executable discovery and host scope', () => {
   assert.equal(chatToolAccess(snapshot, agent).status, '3 tool grants saved');
   assert.equal(chatToolAccess(snapshot, { ...agent, runtimeReady: false }).status, 'Grants saved · runtime unavailable');

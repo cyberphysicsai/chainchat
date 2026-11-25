@@ -55,7 +55,7 @@ test('file bootstrap preserves OpenClaw CLI argv and permits inherited file work
 test('file bootstrap retains authenticated-supervisor IPC shutdown delivery', {timeout: 15000}, async t => {
   const f = await fixture(t);
   const target = path.join(f.directory, 'shutdown-target.mjs');
-  await fs.writeFile(target, `process.on('SIGTERM', () => {process.send?.({stopped: true}); process.exitCode=0;}); process.send?.({ready:true});\n`);
+  await fs.writeFile(target, `const liveGateway=setInterval(()=>{}, 1000); process.on('SIGTERM', () => {clearInterval(liveGateway); process.send?.({stopped: true}); process.exitCode=0;}); process.send?.({ready:true});\n`);
   const child = spawn(process.execPath, [bootstrap, target], {stdio: ['ignore', 'ignore', 'pipe', 'ipc'], windowsHide: true});
   const messages = [], stderr = [];
   child.on('message', value => messages.push(value)); child.stderr.on('data', value => stderr.push(value));
@@ -67,6 +67,15 @@ test('file bootstrap retains authenticated-supervisor IPC shutdown delivery', {t
   assert.equal(code, 0); assert.equal(signal, null);
   assert.deepEqual(messages, [{ready: true}, {stopped: true}]);
   assert.equal(Buffer.concat(stderr).toString(), '');
+});
+
+test('a rejected startup returns its CLI exit code with the supervisor pipe still open', {timeout: 10000}, async t => {
+  const f = await fixture(t);
+  const target = path.join(f.directory, 'invalid-config.mjs');
+  await fs.writeFile(target, 'process.exitCode = 78;\n');
+  const child = spawn(process.execPath, [bootstrap, target], {stdio: ['ignore', 'ignore', 'pipe', 'ipc'], windowsHide: true});
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill(); });
+  assert.deepEqual(await once(child, 'close'), [78, null]);
 });
 
 test('managed Gateway actually selects the file bootstrap without eval-only worker flags', async t => {
@@ -90,33 +99,26 @@ test('managed Gateway actually selects the file bootstrap without eval-only work
   } finally { await manager.close(); }
 });
 
-test('the actual pinned SQLite verifier succeeds on a healthy database only after removing inherited eval flags', {
+test('the file bootstrap runs the pinned SQLite verifier against a disposable database without writing to it', {
   skip: !process.env.CT_OPENCLAW_PACKAGE ? 'Set CT_OPENCLAW_PACKAGE for the actual pinned verifier regression.' : false,
   timeout: 45000,
 }, async t => {
   const f = await fixture(t), sdk = process.env.CT_OPENCLAW_PACKAGE;
   const node = process.env.CT_OPENCLAW_NODE || process.execPath;
-  const candidates = (await fs.readdir(path.join(sdk, 'dist'))).filter(name => /^openclaw-database-verify\.impl-[^.]+\.mjs$/.test(name));
-  assert.equal(candidates.length, 1);
-  const verifier = path.join(sdk, 'dist', candidates[0]), target = path.join(f.directory, 'verify-target.mjs');
-  await fs.writeFile(target, `import fs from 'node:fs/promises'; import {createHash} from 'node:crypto'; import {pathToFileURL} from 'node:url';
-const file=process.argv[2], hash=async()=>createHash('sha256').update(await fs.readFile(file)).digest('hex'), before=await hash();
-const {runDatabaseVerifyWorker}=await import(pathToFileURL(process.argv[3]).href);
-let value=null, failure=null;
-try {value=await runDatabaseVerifyWorker([{path:file,kind:'agent',label:'Owned healthy fixture',check:'quick'}]);}
-catch(error) {failure=error.message;}
-console.log(JSON.stringify({value,failure,unchanged:before===await hash()}));
-`);
+  assert.equal(JSON.parse(await fs.readFile(path.join(sdk, 'package.json'), 'utf8')).version, OPENCLAW_VERSION);
+  const verifier = path.join(sdk, 'dist', 'state', 'openclaw-database-verify.worker.js');
+  assert.ok((await fs.stat(verifier)).isFile());
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(?:SystemRoot|WINDIR|COMSPEC|PATH|PATHEXT|TEMP|TMP)$/i.test(key)));
   Object.assign(env, {HOME: f.directory, USERPROFILE: f.directory, APPDATA: f.directory, LOCALAPPDATA: f.directory,
     OPENCLAW_STATE_DIR: path.join(f.directory, 'state'), OPENCLAW_CONFIG_PATH: path.join(f.directory, 'unused-config.json'), OPENCLAW_NO_RESPAWN: '1'});
   const db = path.join(f.directory, 'healthy.sqlite');
   await execute(node, ['-e', 'const {DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.argv[1]);d.exec("CREATE TABLE healthy_test(value TEXT)");d.close();', db], {env, timeout: 10000});
-  const old = 'import {pathToFileURL} from "node:url"; await import(pathToFileURL(process.argv[1]).href);';
-  const broken = JSON.parse((await execute(node, ['--input-type=module', '--eval', old, target, db, verifier], {env, timeout: 15000})).stdout);
-  assert.equal(broken.failure, 'database verification worker exited with code 1');
-  assert.equal(broken.value, null); assert.equal(broken.unchanged, true);
-  const fixed = JSON.parse((await execute(node, [bootstrap, target, db, verifier], {env, timeout: 15000})).stdout);
-  assert.equal(fixed.failure, null);
-  assert.deepEqual(fixed.value, [{path: db, ok: true}]); assert.equal(fixed.unchanged, true);
+  const before = await fs.readFile(db);
+  const verify = file => execute(node, [bootstrap, verifier, '--openclaw-database-verify-sync', file], {env, timeout: 15000});
+  await verify(db);
+  assert.deepEqual(await fs.readFile(db), before);
+  const invalid = path.join(f.directory, 'invalid.sqlite'), invalidBytes = Buffer.from('Not a SQLite database.');
+  await fs.writeFile(invalid, invalidBytes);
+  await assert.rejects(verify(invalid), {code: 1});
+  assert.deepEqual(await fs.readFile(invalid), invalidBytes);
 });

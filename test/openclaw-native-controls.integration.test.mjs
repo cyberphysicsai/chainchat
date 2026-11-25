@@ -202,7 +202,7 @@ test('native schema settings and disabled Telegram credentials apply, survive re
     assert.ok(availableDiscord&&!availableDiscord.installed,'The pinned external catalogue must make Discord discoverable before installation.');
     assert.equal(availableDiscord.installSource.source,'npm');
     assert.match(availableDiscord.installSource.spec,/^@openclaw\/discord@/u);
-    // In 2026.11.3 Discord is an official external plugin, not a bundled
+    // In 2026.11.10 Discord is an official external plugin, not a bundled
     // installed channel. It belongs in the native Plugins catalogue until the
     // owner installs it; channel setup must not invent an executable adapter.
     // Exercise the same native-plus-pinned catalogue facade used by the public
