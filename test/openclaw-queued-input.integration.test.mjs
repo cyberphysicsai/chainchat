@@ -6,7 +6,7 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;})
 test('actual queued native run retains its original input nonce while a revoked prior actor cannot retry or deliver',{
  skip:!packageRoot||!nodePath?'Set the reviewed native runtime.':false,timeout:240000,
 },async t=>{
- const directory=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ct-native-queued-'))),root=path.join(directory,'agent'),diagnostics=[],admissions=[],operations=[],calls=[];
+ const directory=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ct-native-queued-'))),root=path.join(directory,'agent'),diagnostics=[],admissions=[],operations=[],calls=[],events=[];
  const answer='I can help with care and honesty.',input='Please introduce yourself with care and honesty.',foreignInput='A separate admitted native event is cancelled before this next owner turn.',foreignId=randomUUID(),foreignSeen=deferred(),releaseForeign=deferred();
  let manager,broker,relay,ownerNonce,boundProof,injected=false,foreignInjected=false,queuedReceipt=false,foreignTimer,client,providerError;
  const canonicalSkill=(await currentCanonicalSkill()).skill;
@@ -63,6 +63,23 @@ test('actual queued native run retains its original input nonce while a revoked 
  manager=createOpenClawGateway({stateDir:path.join(directory,'gateway'),packageRoot,nodePath,broker:observed,pluginPath:fileURLToPath(new URL('../openclaw/plugin',import.meta.url)),onDiagnostic:line=>{
    if(line.startsWith('[chainchat] ')&&diagnostics.length<12)diagnostics.push(line.trim());
  }});
+ const sessionKey=controlSessionKey(identity);
+ const actor=id=>typeof id!=='string'||!id?'missing':id===ownerNonce?'owner':id===foreignId?'prior':'other';
+ const messageFacts=message=>{
+   const content=typeof message?.content==='string'?message.content:Array.isArray(message?.content)
+     ?message.content.filter(block=>block?.type==='text'&&typeof block.text==='string').map(block=>block.text).join('\n'):'';
+   return {role:['user','assistant','toolResult'].includes(message?.role)?message.role:'unknown',
+     actor:actor(message?.__openclaw?.runId),hasText:Boolean(content.trim()),matchesAnswer:content===answer};
+ };
+ const observation=manager.registerNativeService({id:'queued-test-observation',methods:{'chat.history':()=>({sessionKey,inputRunIds:[ownerNonce],limit:16,maxBytes:65536})},
+   events:['chat','session.message'],requestTimeoutMs:5000});
+ observation.subscribe(event=>{
+   const payload=event.payload;
+   if(payload?.sessionKey!==sessionKey||events.length>=32)return;
+   events.push({event:event.event,actor:actor(payload.runId),state:['delta','final','error','aborted'].includes(payload.state)?payload.state:'none',
+     stopReason:['stop','completed','aborted','restart','timeout'].includes(payload.stopReason)?payload.stopReason:'other',
+     sequence:Number.isSafeInteger(payload.seq)?payload.seq:undefined,hasDelta:typeof payload.deltaText==='string',message:messageFacts(payload.message)});
+ });
  await manager.configureNativeProvider({identity,provider:'queued-native',configuration:{baseUrl:`http://127.0.0.1:${provider.address().port}/v1`,api:'openai-completions',models:[{id:'fixture',name:'Synthetic queued native model',reasoning:false,input:['text'],contextWindow:131072,maxTokens:4096,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}]}});
  await manager.nativeAuth({identity,action:'key',provider:'queued-native',apiKey:'synthetic-queued-fixture-key'});await manager.setNativeModel(identity,'queued-native/fixture');
  const config={provider:'native',tier:'native',model:'queued-native/fixture',contextWindow:131072,maxOutputTokens:4096,reasoningCapable:false};
@@ -77,5 +94,14 @@ test('actual queued native run retains its original input nonce while a revoked 
   assert.equal(broker.nativeInvocation(controlSessionKey(identity)),null);
   assert.deepEqual((await engine({op:'inspect',root,registryRoot:root,learning:false})).head,state.head);
   t.diagnostic(JSON.stringify({previousClaimRevoked:true,queuedInputReceiptObserved:queuedReceipt,queuedProtocolRunIdMatchesInputNonce:true,modelCalls:calls.length}));
- }catch(error){releaseForeign.resolve();t.diagnostic(JSON.stringify({code:error.code||'ASSERTION',injected,queuedReceipt,ownerNonce,foreignId,admissions,calls,operations,boundProof,diagnostics}));throw error;}
+ }catch(error){
+  releaseForeign.resolve();
+  let retained;
+  if(queuedReceipt)try{
+   const history=await observation.request('chat.history',{});
+   retained={consumed:history.inputReceipts?.some(row=>row.runId===ownerNonce&&row.state==='consumed')===true,
+     messages:(history.messages||[]).map(messageFacts)};
+  }catch{retained={available:false};}
+  t.diagnostic(JSON.stringify({code:error.code||'ASSERTION',injected,queuedReceipt,admissions,calls,operations,boundProof,diagnostics,events,retained}));throw error;
+ }
 });

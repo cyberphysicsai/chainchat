@@ -10,7 +10,7 @@ on:
         description: 'Full release acceptance or focused native diagnosis'
         type: choice
         default: full
-        options: [full, byok-reliability, native-settings, tool-grants, runtime-upgrade, runtime-history, live-deepseek]
+        options: [full, byok-reliability, native-settings, tool-grants, runtime-upgrade, runtime-history, runtime-queue, live-deepseek]
 permissions:
   contents: read
 jobs:
@@ -136,6 +136,8 @@ jobs:
             node --test test/openclaw-reliability.integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "tool-grants" ]]; then
             node --test test/openclaw-tools-ui.integration.test.mjs test/tool-authority.test.mjs test/host-process-context.test.mjs test/chat-tools-ui.test.mjs test/native-settings-integration.test.mjs test/native-media-completion.test.mjs test/native-media-task-bindings.test.mjs
+          elif [[ "$CT_CI_SUITE" == "runtime-queue" ]]; then
+            node --test test/openclaw-queued-input.integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "runtime-history" ]]; then
             node --test --test-concurrency=1 test/openclaw-queued-input.integration.test.mjs test/gateway-bootstrap.test.mjs test/openclaw-native-compaction.integration.test.mjs test/native-async-media.integration.test.mjs
           elif [[ "$CT_CI_SUITE" == "runtime-upgrade" ]]; then
