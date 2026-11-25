@@ -7,7 +7,7 @@ test('actual queued native run retains its original input nonce while a revoked 
  skip:!packageRoot||!nodePath?'Set the reviewed native runtime.':false,timeout:240000,
 },async t=>{
  const directory=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ct-native-queued-'))),root=path.join(directory,'agent'),diagnostics=[],admissions=[],operations=[],calls=[],events=[];
- const answer='I can help with care and honesty.',input='Please introduce yourself with care and honesty.',foreignInput='A separate admitted native event is cancelled before this next owner turn.',foreignId=randomUUID(),foreignSeen=deferred(),releaseForeign=deferred();
+ const answer='I can help with care and honesty.',priorAnswer='This prior reply must not be released as the owner response.',input='Please introduce yourself with care and honesty.',foreignInput='A separate admitted native event is cancelled before this next owner turn.',foreignId=randomUUID(),foreignSeen=deferred(),releaseForeign=deferred();
  let manager,broker,relay,ownerNonce,boundProof,injected=false,foreignInjected=false,queuedReceipt=false,foreignTimer,client,providerError;
  const canonicalSkill=(await currentCanonicalSkill()).skill;
  const provider=http.createServer(async(req,res)=>{try{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);
@@ -15,7 +15,7 @@ test('actual queued native run retains its original input nonce while a revoked 
   calls.push({ownerInput:text.includes(input),priorInput:text.includes(foreignInput)});
   assert.equal(raw.includes('[CHAINCHAT_PRIVATE_MODEL_ROUTE:'),false);assert.ok(text.includes(canonicalSkill));assert.equal(text.split(canonicalSkill).length-1,1);
   if(text.includes(foreignInput)){foreignSeen.resolve();await releaseForeign.promise;}
-  res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:'queued-fixture',choices:[{index:0,delta:{role:'assistant',content:answer},finish_reason:null}]})}\n\n`);res.end(`data: ${JSON.stringify({id:'queued-fixture',choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:20,completion_tokens:10,total_tokens:30}})}\n\ndata: [DONE]\n\n`);
+  res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:'queued-fixture',choices:[{index:0,delta:{role:'assistant',content:text.includes(input)?answer:priorAnswer},finish_reason:null}]})}\n\n`);res.end(`data: ${JSON.stringify({id:'queued-fixture',choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:20,completion_tokens:10,total_tokens:30}})}\n\ndata: [DONE]\n\n`);
   }catch(error){providerError=error;foreignSeen.resolve();res.writeHead(500,{'content-type':'application/json'});res.end('{"error":{"message":"Synthetic fixture assertion failed."}}');}
  });provider.listen(0,'127.0.0.1');await once(provider,'listening');
  const {GatewayClient}=await import(pathToFileURL(path.join(packageRoot,'dist/plugin-sdk/gateway-runtime.js')).href),request=GatewayClient.prototype.request;
@@ -69,7 +69,7 @@ test('actual queued native run retains its original input nonce while a revoked 
    const content=typeof message?.content==='string'?message.content:Array.isArray(message?.content)
      ?message.content.filter(block=>block?.type==='text'&&typeof block.text==='string').map(block=>block.text).join('\n'):'';
    return {role:['user','assistant','toolResult'].includes(message?.role)?message.role:'unknown',
-     actor:actor(message?.__openclaw?.runId),hasText:Boolean(content.trim()),matchesAnswer:content===answer};
+     actor:actor(message?.__openclaw?.runId),hasText:Boolean(content.trim()),matchesAnswer:content===answer,normalStop:message?.stopReason==='stop'};
  };
  const observation=manager.registerNativeService({id:'queued-test-observation',methods:{'chat.history':()=>({sessionKey,inputRunIds:[ownerNonce],limit:16,maxBytes:65536})},
    events:['chat','session.message'],requestTimeoutMs:5000});
@@ -91,6 +91,10 @@ test('actual queued native run retains its original input nonce while a revoked 
   assert.ok(admissions.some(row=>row.runId===foreignId&&!row.sourceMatches));
   assert.ok(admissions.some(row=>row.runId===ownerNonce),'The queued input must be admitted under its original protocol run ID.');
   assert.deepEqual(boundProof,{runId:ownerNonce,proof:{kind:'direct-run',inputId:ownerNonce}});
+  const committed=events.findIndex(row=>row.event==='session.message'&&row.actor==='owner'&&row.message.actor==='owner'&&row.message.matchesAnswer);
+  const terminal=events.findIndex(row=>row.event==='chat'&&row.actor==='owner'&&row.state==='final'&&row.stopReason==='stop'&&!row.message.hasText);
+  assert.ok(committed>=0&&terminal>committed,'The exact committed assistant event precedes the contentless native final.');
+  assert.ok(operations.some(row=>row.actor==='prior'&&row.op==='finalize'&&row.status===422),'The revoked prior candidate cannot obtain a release receipt.');
   assert.equal(broker.nativeInvocation(controlSessionKey(identity)),null);
   assert.deepEqual((await engine({op:'inspect',root,registryRoot:root,learning:false})).head,state.head);
   t.diagnostic(JSON.stringify({previousClaimRevoked:true,queuedInputReceiptObserved:queuedReceipt,queuedProtocolRunIdMatchesInputNonce:true,modelCalls:calls.length}));

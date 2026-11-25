@@ -84,6 +84,37 @@ export async function readNativeReviewedCandidate(broker, claimId, generatedText
     throw error;
   }
 }
+export function createNativeCommittedTextWitness({ sessionKey, runId, signal }) {
+  let row, terminal = false, success = false;
+  const managed = typeof sessionKey === 'string' && /^agent:main:chainchat-control:[a-f0-9]{64}$/.test(sessionKey) &&
+    typeof runId === 'string' && runId.length > 0 && runId.length <= 256;
+  return {
+    observe(event) {
+      const payload = event?.payload;
+      if (!managed || signal?.aborted !== false || terminal || payload?.sessionKey !== sessionKey || payload.runId !== runId) return;
+      if (event.event === 'chat' && ['final', 'error', 'aborted'].includes(payload.state)) {
+        terminal = true;
+        success = payload.state === 'final' && payload.stopReason === 'stop';
+        return;
+      }
+      const message = payload.message, metadata = message?.__openclaw;
+      if (event.event !== 'session.message' || message?.role !== 'assistant' || metadata?.runId !== runId ||
+          message.stopReason !== 'stop' || message.display === false || message.openclawStreamFallback || row === null) return;
+      const content = message.content;
+      const text = typeof content === 'string' ? content : Array.isArray(content) && content.length <= 32 &&
+        content.every(block => block?.type === 'text' && typeof block.text === 'string') ? content.map(block => block.text).join('\n') : '';
+      if (!text.trim() || Buffer.byteLength(text, 'utf8') > 128 * 1024) return;
+      if (metadata.id !== undefined && payload.messageId !== undefined && metadata.id !== payload.messageId) return;
+      const id = typeof payload.messageId === 'string' && payload.messageId.length <= 256 ? payload.messageId : null;
+      if (!row) row = { id, text };
+      else if (!id || row.id !== id || row.text !== text) row = null;
+    },
+    read(reviewed) {
+      return success && signal?.aborted === false && reviewed?.receipt?.reviewed === true &&
+        reviewed.candidate === row?.text ? row?.text : undefined;
+    },
+  };
+}
 function nativeControlWatchdogMs(requestTimeoutMs) {
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 100 || requestTimeoutMs > 600000)
     throw new TypeError('The native invocation timeout must be an integer from 100 through 600000 milliseconds.');
@@ -1385,7 +1416,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       contextWindow, maxOutputTokens: outputCeiling });
     await stopChild();
   }
-  async function nativeTurn(params, controller, { allowEmptyFinal = false } = {}) {
+  async function nativeTurn(params, controller, { allowEmptyFinal = false, committedTextWitness } = {}) {
     await assertEnforcementHealthy();
     const client = await nativeConnectionReady();
     let expectedRun = params.idempotencyKey, settled = false, done, acknowledged = false, bufferedText = '';
@@ -1397,6 +1428,7 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
     // sibling event promise observed while propagating the admission failure.
     completed.catch(() => {});
     const listener = event => {
+      if (!settled) committedTextWitness?.observe(event);
       if (event.event !== 'chat' || event.payload?.sessionKey !== params.sessionKey) return;
       const payload = event.payload;
       if (!acknowledged && payload.runId !== expectedRun) { earlyEvents.push(event); return; }
@@ -1596,9 +1628,13 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
       if (Object.keys(inherited).length && !native) await nativeRpc('sessions.patch', { key: sessionKey, ...inherited });
       if (native || nativeProvider) {
         await nativeRpc('sessions.patch', { key: sessionKey, model: nativeProvider ? config.model : `${PROVIDERS[config.provider].id}/route` });
-        const generated = await nativeTurn({ sessionKey, message: args.messages.at(-1).content, idempotencyKey: native?.goalOperation?.operationId || invocationId,
+        const inputId = native?.goalOperation?.operationId || invocationId;
+        const committedTextWitness = native?.kind === 'message' && !native.goalOperation && !native.intent
+          ? createNativeCommittedTextWitness({ sessionKey, runId: inputId, signal: controller.signal }) : undefined;
+        const generated = await nativeTurn({ sessionKey, message: args.messages.at(-1).content, idempotencyKey: inputId,
           ...(native?.intent?.kind==='session-goal-start'?{}:{queueMode:'followup'}),
-          deliver: false, ...(attachments.length?{attachments}:{}), ...(native?.intent ? { intent: native.intent } : {}), ...(native?.goalOperation ? { goalOperation: native.goalOperation } : {}) }, controller, {allowEmptyFinal:true});
+          deliver: false, ...(attachments.length?{attachments}:{}), ...(native?.intent ? { intent: native.intent } : {}), ...(native?.goalOperation ? { goalOperation: native.goalOperation } : {}) },
+          controller, {allowEmptyFinal:true, committedTextWitness});
         responseComplete = true; assertCredentialIsolation(config, generated); checkServiceIsolation(generated);
         let enforcement;
         const reviewed = typeof broker.readCandidate === 'function' ? await readNativeReviewedCandidate(broker, claim.claimId, generated.text) : null;
@@ -1610,6 +1646,16 @@ export function createOpenClawGateway({ stateDir, packageRoot, nodePath = proces
           generated.text=typeof projected[0]?.text==='string'&&projected[0].text.trim()?projected[0].text:'Generated media is ready.';
           enforcement=await broker.assertDisplayCandidate({claimId:claim.claimId,display:generated.text});
         } else {
+          // The current native runtime may publish queued, transcript-owned
+          // text on session.message and close with a contentless chat final.
+          // Accept only the identical reviewed candidate, never a transcript
+          // row as standalone output authority.
+          const committedText = !generated.text?.trim() ? committedTextWitness?.read(reviewed) : undefined;
+          if (committedText) {
+            generated.text = committedText;
+            assertCredentialIsolation(config, generated);
+            checkServiceIsolation(generated);
+          }
           if (!generated.text?.trim()) throw fail('OpenClaw ended this turn without an approved final reply.','OPENCLAW_EMPTY_RESPONSE');
           enforcement = await broker.assertCandidate({ claimId: claim.claimId, candidate: generated.text });
         }

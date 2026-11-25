@@ -1,4 +1,4 @@
-/** Verify the installed SDK compatibility overlays. */
+/** Verify the installed SDK admission and API-key policy overlays. */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -17,9 +17,6 @@ const expected = [
   }},
   {id: 'managed-system-context-v1', files: {
     'dist/attempt-D0eWH9Mj.mjs':['d3b813a804ce7f4d6da2eb113a5832b79f7bbfcd18fa3c42eb24f6977d7fe52e','4a1aefcd4df65b3d8b8a5ce95080f660e8070a21706a8edc1e62c08f4d1b6f7f'],
-  }},
-  {id: 'queued-terminal-display-v1', files: {
-    'dist/chat-send-handler-D686bqTH.mjs':['dcf96d99d3cce2e4ece919a1de11178f9d9ea96956f34d27b985770678c3ffb2','e83e02ee4cbf6681ca8d90b7cdf24f2dd3fab9dc18701bec5025aaf74f17c45c'],
   }},
 ];
 function matchesCommitment(overlay, index) {

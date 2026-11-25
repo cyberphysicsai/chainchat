@@ -43,24 +43,29 @@ in the same file. Setup refuses a different upstream version or damaged archive.
 Windows uses the official embeddable CPython 3.15.2 archive. macOS and Linux
 use Astral's CPython 3.15.2 standalone builds from its 20261026 release.
 
-`runtimeCompatibilityOverlays` records five exact groups for OpenClaw 2026.11.10.
+`runtimeCompatibilityOverlays` records four exact groups for OpenClaw 2026.11.10.
 `early-hook-input-provenance-v2` covers two early hook files.
 `api-key-channel-auth-v1` covers the shared raw `/login` dispatch, built-in
 command registry and native auth-status handler. `admitted-tool-presentation-v1`
 keeps the native turn's visible tool definitions inside its computed callable
 set. Deferred tools stay deferred. `managed-system-context-v1` keeps the managed
-PoI engine's fresh system context in the system message. `queued-terminal-display-v1`
-includes the exact committed text in the authenticated completion event for an
-eligible managed queue reply. The native delivery check and the broker's exact
-PoI candidate check still apply. The installer validates every input before
-publishing a replacement and accepts exact original or reviewed output bytes.
-Launcher doctor and Gateway verify every final hash before startup. The metadata overlay preserves typed
+PoI engine's fresh system context in the system message instead of saving it as a
+session prompt update. The plugin independently checks and reviews each concrete
+call. The installer validates all seven inputs before publishing any
+replacement and accepts exact original or exact reviewed output bytes. Launcher
+doctor and Gateway require all seven
+final hashes before startup. The metadata overlay preserves typed
 asynchronous task provenance and original client-nonce correlation at mandatory
 early admission; message text or transport acknowledgment grants no authority.
 On each upstream update, inspect the public hook contract and remove the overlay
 when upstream supplies both fields, or
 deliberately review new exact files and anchors. Never apply fuzzy replacements
 to a different release.
+
+For a queued managed reply, OpenClaw can send the committed assistant message
+separately from its empty completion frame. ChainChat correlates both events
+with the current run and verifies the exact text against its PoI receipt before
+displaying the reply.
 
 An update is a reviewed release, not an unattended merge of executable code:
 

@@ -6,7 +6,7 @@ import path from "node:path";
 import http from "node:http";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { createOpenClawGateway, providerRequest, OPENCLAW_VERSION, consumeModelRouteCapability, nativeControlCloseError, nativeLifecycleDiagnostic, readNativeReviewedCandidate } from "../openclaw/gateway.mjs";
+import { createOpenClawGateway, providerRequest, OPENCLAW_VERSION, consumeModelRouteCapability, nativeControlCloseError, nativeLifecycleDiagnostic, readNativeReviewedCandidate, createNativeCommittedTextWitness } from "../openclaw/gateway.mjs";
 import { createPoIBroker } from "../openclaw/broker.mjs";
 import { engine } from "../lib/engine.mjs";
 import { DIMENSIONS, FRUITS } from "../lib/providers.mjs";
@@ -29,6 +29,49 @@ test('owned native lifecycle diagnostics are bounded fixed enums and numeric gen
   const result = nativeLifecycleDiagnostic('private-key\nexit', 'private-key', -1, 'private-key\nSIGTERM');
   assert.equal(result, '[chainchat] native lifecycle event=UNKNOWN generation=UNKNOWN code=UNKNOWN signal=UNKNOWN\n');
   assert.equal(result.includes('private-key'), false);
+});
+
+test('a contentless managed final can use only its current committed text and exact PoI-reviewed candidate', () => {
+  const sessionKey = 'agent:main:chainchat-control:' + 'a'.repeat(64), runId = 'current-run';
+  const answer = 'The exact reviewed reply.';
+  const receipt = { candidate: answer, receipt: { reviewed: true } };
+  const row = { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: answer }], __openclaw: { runId, id: 'row-1' } };
+  const message = { event: 'session.message', payload: { sessionKey, runId, messageId: 'row-1', message: row } };
+  const final = { event: 'chat', payload: { sessionKey, runId, state: 'final', stopReason: 'stop' } };
+  const fixture = () => {
+    const controller = new AbortController();
+    return { controller, witness: createNativeCommittedTextWitness({ sessionKey, runId, signal: controller.signal }) };
+  };
+  const withRow = patch => ({ ...message, payload: { ...message.payload, message: { ...row, ...patch } } });
+  const { controller, witness } = fixture();
+  witness.observe(message);
+  assert.equal(witness.read(receipt), undefined, 'A transcript event alone cannot complete a turn.');
+  witness.observe(structuredClone(message));
+  witness.observe(final);
+  assert.equal(witness.read(receipt), answer);
+  assert.equal(witness.read({ ...receipt, candidate: 'Different reviewed reply.' }), undefined);
+  assert.equal(witness.read({ ...receipt, receipt: { reviewed: false } }), undefined);
+  controller.abort();
+  assert.equal(witness.read(receipt), undefined);
+
+  const independentCases = [
+    [{ ...message, payload: { ...message.payload, runId: 'prior-run' } }, final],
+    [withRow({ __openclaw: { runId: 'prior-run' } }), final],
+    [{ ...message, payload: { ...message.payload, sessionKey: 'other-session' } }, final],
+    [withRow({ __openclaw: { ...row.__openclaw, id: 'conflicting-row' } }), final],
+    [withRow({ role: 'user' }), final],
+    [withRow({ content: [...row.content, { type: 'image' }] }), final],
+    [withRow({ content: 'a'.repeat(128 * 1024 + 1) }), final],
+    [message, { ...final, payload: { ...final.payload, state: 'aborted' } }],
+    [message, { ...final, payload: { ...final.payload, stopReason: 'restart' } }],
+    [final, message],
+    [message, withRow({ content: 'Different persisted text.' }), final],
+  ];
+  for (const events of independentCases) {
+    const { witness } = fixture();
+    events.forEach(event => witness.observe(event));
+    assert.equal(witness.read(receipt), undefined);
+  }
 });
 
 test('empty native finals retain strict candidate review and distinguish a missing reply from media or authorization faults', async () => {

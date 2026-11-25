@@ -45,12 +45,19 @@ test('actual native image jobs deliver reviewed owned output and report failed j
       response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ created: 1, data: [{ b64_json: image.toString('base64') }] })); return;
     }
     assert.equal(request.url, '/v1/chat/completions');
-    const context = body.messages.map(message => typeof message.content === 'string' ? message.content : (message.content || []).map(part => part.text || '').join('\n')).join('\n');
+    const messages = body.messages.map(message => ({ role: message.role,
+      text: typeof message.content === 'string' ? message.content : (message.content || []).map(part => part.text || '').join('\n') }));
+    const context = messages.map(message => message.text).join('\n');
     if (context.startsWith('Write an Activity recap for someone scanning their tasks: what was done here, and where it stands now.')) {
       assert.equal(body.tools?.length || 0, 0);
       response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ id: 'native-media-recap', choices: [{ index: 0, message: { role: 'assistant', content: 'A local generated-image task is being reviewed.' }, finish_reason: 'stop' }] })); return;
     }
-    assert.equal(context.split(canonicalSkill).length - 1, 1, 'Every actual agent iteration receives one exact canonical skill.');
+    const policyCount = context.split(canonicalSkill).length - 1;
+    if (policyCount !== 1) t.diagnostic(JSON.stringify({ phase, imageCalls, completions: completions.length, policyCount,
+      model: body.model, stream: body.stream === true, tools: (body.tools || []).map(tool => tool.function?.name || tool.name),
+      messages: messages.slice(0, 4).map(({ role, text }) => ({ role, length: text.length,
+        prefix: text.replaceAll('sk-synthetic-async-media-key', '[SYNTHETIC KEY]').slice(0, 180) })) }));
+    assert.equal(policyCount, 1, 'Every actual agent iteration receives one exact canonical skill.');
     const starting = !issued; issued = true;
     const completed = completions.length > completionBaseline;
     Object.assign(call, { starting, completed, toolResults: body.messages.filter(message => message.role === 'tool').length });
