@@ -512,6 +512,33 @@ test('explicit primary-off save preserves native grants while explicit and legac
   assert.equal(generated.length, 0); assert.equal(f.modelCalls.length, 0);
 });
 
+test('moving an approved project preserves native settings, shows its status, and allows scoped primary off', async t => {
+  const f = await fixture(t, { openclawFactory: () => permissionManager() }); await f.ready();
+  const temp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ct-project-permissions-')));
+  t.after(async () => { assert.equal(path.dirname(temp), await fs.realpath(os.tmpdir())); await fs.rm(temp, { recursive: true, force: true }); });
+  const root = path.join(temp, 'project'), destination = path.join(temp, 'changed');
+  await fs.mkdir(root);
+  const primary = { operation: 'save', enabled: true, acknowledged: true, tools: ['read'], roots: [root], networkHosts: [], allowExecution: false };
+  const saved = await f.request('/api/openclaw/tools', primary);
+  assert.equal(saved.status, 200);
+  const original = saved.body.toolAuthority.grant.roots;
+  await fs.rename(root, destination);
+  const readback = await f.request('/api/openclaw');
+  assert.equal(readback.status, 200);
+  assert.deepEqual(readback.body.toolDirectories, { available: 0, unavailable: 1 });
+  assert.deepEqual(readback.body.toolAuthority.grant.roots, original);
+  const native = await f.request('/api/openclaw/native-capabilities', nativePermissionGrant());
+  assert.equal(native.status, 200);
+  assert.deepEqual(native.body.toolAuthority.grant.roots, original);
+  const rejected = await f.request('/api/openclaw/tools', { ...primary, enabled: false, roots: ['invalid-relative-path'] });
+  assert.equal(rejected.status, 403);
+  const off = await f.request('/api/openclaw/tools', { ...primary, enabled: false, acknowledged: false });
+  assert.equal(off.status, 200);
+  assert.equal(off.body.toolAuthority.grant.enabled, false);
+  assert.deepEqual(off.body.toolAuthority.grant.nativeCapabilities, nativePermissionGrant());
+  assert.deepEqual(off.body.toolAuthority.grant.roots, original);
+});
+
 for (const order of ['save-native', 'native-then-revoke', 'revoke-then-native'])
 test(`permission endpoint transactions do not lose scopes or resurrect revoked grants: ${order}`, { timeout: 15000 }, async t => {
   const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };

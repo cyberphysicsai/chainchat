@@ -47,10 +47,10 @@ function check(maximum, kind = 'length') {
 }
 
 async function actualZod() {
-  // These are pure bundled Zod leaves. Importing the broad api chunk would
+  // These are OpenClaw’s patched-upstream Zod 4.6.7 leaves. Importing the broad api chunk would
   // also initialize unrelated plugin-entry code, which this regression avoids.
-  const schemas = await import(pathToFileURL(path.join(packageRoot, 'dist/schemas-BOYIvvln.mjs')));
-  const {i: compile} = await import(pathToFileURL(path.join(packageRoot, 'dist/compile-wI2qQAAF.mjs')));
+  const schemas = await import(pathToFileURL(path.join(packageRoot, 'dist/schemas-DuCQi-Qb.mjs')));
+  const {i: compile} = await import(pathToFileURL(path.join(packageRoot, 'dist/compile-CzTmaA66.mjs')));
   return {array: schemas.Nt, string: schemas.Jn, number: schemas.Pn, map: schemas.Tn,
     set: schemas.Kn, object: schemas.Fn, compile};
 }
@@ -65,11 +65,12 @@ test('embedded Zod attestation refuses changed, incomplete and path-replaced com
 });
 
 test('all exact embedded Zod outputs are present in the installed package', native, async () => {
-  assert.equal(descriptor.files.length, 18);
+  assert.deepEqual(descriptor.files.map(row => row.path),
+    ['node_modules/chrome-devtools-mcp/build/src/third_party/index.js']);
   assert.deepEqual(await assertZodSecurity(packageRoot, descriptor), descriptor);
 });
 
-test('every embedded interpreter gates oversized arrays before evaluating children', native, async () => {
+test('the patched browser dependency gates oversized arrays before evaluating children', native, async () => {
   let copies = 0;
   for (const row of descriptor.files) {
     const source = await fs.readFile(path.join(packageRoot, row.path), 'utf8');
@@ -99,10 +100,10 @@ test('every embedded interpreter gates oversized arrays before evaluating childr
       assert.equal(payload.issues.length, 0);
     }
   }
-  assert.equal(copies, 17);
+  assert.equal(copies, 1);
 });
 
-test('both embedded compilers emit upper bounds before array/map/set child work', native, async () => {
+test('the patched browser compiler gates collections before evaluating children', native, async () => {
   let copies = 0;
   for (const row of descriptor.files) {
     const source = await fs.readFile(path.join(packageRoot, row.path), 'utf8');
@@ -132,7 +133,7 @@ test('both embedded compilers emit upper bounds before array/map/set child work'
       assert.ok(touched > 0, `${row.path}: ${kind} normal children still run`);
     }
   }
-  assert.equal(copies, 2);
+  assert.equal(copies, 1);
 });
 
 test('actual Zod interpreter and compiled APIs reject oversized collections without visiting elements', native, async () => {

@@ -9,12 +9,12 @@ import { createPoIBroker } from '../openclaw/broker.mjs';
 import { FRUITS, DIMENSIONS } from '../lib/providers.mjs';
 
 async function files(t) {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ct-host-scope-'));
+  const temp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ct-host-scope-')));
   const work = path.join(temp, 'documents'), secret = path.join(temp, 'private-chain');
   await fs.mkdir(work); await fs.mkdir(secret);
   await fs.writeFile(path.join(work, 'notes.txt'), 'hello');
   await fs.writeFile(path.join(secret, 'private.txt'), 'private');
-  t.after(async () => { assert.ok(path.resolve(temp).startsWith(path.resolve(os.tmpdir()) + path.sep)); await fs.rm(temp, { recursive: true, force: true }); });
+  t.after(async () => { assert.equal(path.dirname(temp), await fs.realpath(os.tmpdir())); await fs.rm(temp, { recursive: true, force: true }); });
   const grant = { enabled: true, acknowledged: true, allowExecution: false, tools: ['read', 'write', 'edit'], roots: [work], networkHosts: [] };
   return { temp, work, secret, grant };
 }
@@ -71,6 +71,30 @@ test('file calls bind canonical paths, prevent traversal and protect application
   const hardlink = path.join(f.work, 'private-hardlink.txt');
   await fs.link(path.join(f.secret, 'private.txt'), hardlink);
   await assert.rejects(authorizeToolCall(f.grant, call('read', { path: hardlink })));
+});
+
+test('native project edit accepts exact replacement arrays and denies mixed or malformed edits before review', async t => {
+  const f = await brokerFixture(t), file = path.join(f.work, 'notes.txt');
+  const replacements = [{ oldText: 'hello', newText: 'updated' }];
+  for (const [index, params] of [
+    { edits: [] },
+    { edits: [{ oldText: '', newText: 'other' }] },
+    { edits: [{ oldText: 'hello', newText: 'other', path: f.secret }] },
+    { edits: replacements, oldText: 'hello', newText: 'other' },
+    { edits: replacements, replace_all: true },
+  ].entries()) {
+    assert.equal((await f.request('tool', { tool: call('edit', { path: file, ...params }, `denied-edit-${index}`) })).allowed, false);
+  }
+  assert.equal(f.reviews.length, 0);
+  const result = await f.request('tool', { tool: call('edit', { path: file, edits: replacements }, 'native-project-edit') });
+  assert.equal(result.allowed, true);
+  assert.deepEqual(result.tool.params, { path: file, edits: replacements });
+  assert.deepEqual(JSON.parse(f.reviews[0].candidate).tool, result.tool);
+  assert.equal(f.evaluations, 1);
+  assert.equal(await fs.readFile(file, 'utf8'), 'hello', 'The broker reviews the exact effect without executing it.');
+  assert.equal((await authorizeToolCall(f.grant, call('read', { path: file, cursor: 1, optional: true }))).params.cursor, 1);
+  await assert.rejects(authorizeToolCall(f.grant, call('read', { path: file, cursor: -1 })), /read continuation/);
+  assert.equal((await authorizeToolCall(f.grant, call('edit', { path: file, oldText: 'hello', newText: 'legacy' }))).params.oldText, 'hello');
 });
 
 test('network calls require an exact public HTTPS hostname and independently verified public DNS', async () => {
@@ -132,6 +156,7 @@ async function brokerFixture(t, options = {}) {
   const config = { apiKey: 'private-test-key-never-show', provider: 'compatible', model: 'fixture' };
   const sessionKey = options.goals && !options.scratch ? `agent:main:chainchat-control:${'a'.repeat(64)}` : 'agent:main:fixture';
   const originalGrant = options.toolAuthority ? options.toolAuthority(f.grant) : f.grant;
+  await options.beforeAdmission?.(f);
   const context = { root: f.secret, input: 'Read my notes.', loadout: [], purpose: options.plain ? 'plain' : options.utility ? 'utility' : 'candidate', toolAuthority: options.disabled ? undefined : originalGrant,
     goalAuthority: options.goalAuthority || (options.goals ? { enabled: true, sessionKey, goalId: 'goal-one' } : undefined),
     readNativeGoal: options.goals ? async () => ({ id: 'goal-one', objective: 'Read my notes.', status: 'active' }) : undefined,
@@ -145,6 +170,47 @@ async function brokerFixture(t, options = {}) {
   await request('admit'); const prepared = await request('prepare');
   return { ...f, broker, request, prepared, nativeCalls, reviews, events, originalGrant, setHead: value => { head = value; }, setTime: value => { time = value; }, get evaluations() { return evaluations; }, get authorizations() { return authorizations; } };
 }
+
+test('a moved project keeps ordinary PoI chat available and leaves unrelated command permission active', async t => {
+  const f = await brokerFixture(t, {
+    toolAuthority: grant => ({ ...grant, tools: [...grant.tools, 'exec'], allowExecution: true }),
+    beforeAdmission: ({ work }) => fs.rename(work, work + '-moved'),
+  });
+  assert.equal(f.prepared.allowed, true);
+  assert.deepEqual(f.prepared.toolsAllow, ['exec']);
+  assert.match(f.prepared.context, /saved project directories are unavailable or changed/);
+  assert.ok(f.events.some(event => event[0] === 'tool' && event[1] === 'held' && /Tool access/.test(event[2])));
+  const read = call('read', { path: path.join(f.work + '-moved', 'notes.txt') }, 'moved-project-read');
+  assert.equal((await f.request('tool', { tool: read })).allowed, false);
+  assert.equal(f.reviews.length, 0);
+  const exec = call('exec', { command: 'echo fixture', workdir: f.temp }, 'independent-exec');
+  assert.equal((await f.request('tool', { tool: exec })).allowed, true);
+  const response = await f.request('finalize', { candidate: 'The original project path needs attention.' });
+  assert.equal(response.allowed, true);
+  assert.equal(response.receipt.reviewed, true);
+  assert.deepEqual(f.originalGrant.roots, [f.work]);
+});
+
+test('admission never follows a redirected saved path and preserves another directory that still matches', async t => {
+  const f = await brokerFixture(t, {
+    toolAuthority: grant => ({ ...grant, roots: [...grant.roots, path.join(path.dirname(grant.roots[0]), 'second-project')] }),
+    beforeAdmission: async ({ work, temp }) => {
+      const second = path.join(temp, 'second-project'), destination = work + '-moved';
+      await fs.mkdir(second);
+      await fs.writeFile(path.join(second, 'ok.txt'), 'authorized');
+      await fs.rename(work, destination);
+      await fs.symlink(destination, work, process.platform === 'win32' ? 'junction' : 'dir');
+    },
+  });
+  assert.deepEqual(f.prepared.toolsAllow, ['read', 'write', 'edit']);
+  const denied = call('read', { path: path.join(f.work, 'notes.txt') }, 'redirected-project');
+  const admitted = call('read', { path: path.join(f.temp, 'second-project', 'ok.txt') }, 'valid-project');
+  assert.equal((await f.request('tool', { tool: denied })).allowed, false);
+  assert.equal(f.reviews.length, 0);
+  assert.equal((await f.request('tool', { tool: admitted })).allowed, true);
+  assert.equal(f.reviews.length, 1);
+  assert.deepEqual(f.originalGrant.roots, [f.work, path.join(f.temp, 'second-project')]);
+});
 
 test('ordinary chat with a legacy empty-host Browser grant is reviewed without inheriting any action tools', async t => {
   const f = await brokerFixture(t, { toolAuthority: grant => ({ ...grant, tools: ['browser'], roots: [] }) });

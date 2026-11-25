@@ -35,7 +35,7 @@ import {createRuntimeStderrEvidence} from './runtime-stderr-evidence.mjs';
 
 import { CONTEXT_POLICY } from './plugin/compaction.mjs';
 
-export const OPENCLAW_VERSION = "2026.11.3";
+export const OPENCLAW_VERSION = "2026.11.10";
 const MAX_BYTES = 24 * 1024 * 1024;
 const PROVIDERS = Object.freeze({
   openai: { id: "chainchat-openai", api: "openai-responses", prefix: "/openai/v1", endpoint: "/responses" },

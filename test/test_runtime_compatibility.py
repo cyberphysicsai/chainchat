@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -59,9 +60,10 @@ class RuntimeCompatibilityTests(unittest.TestCase):
                                    [dict(descriptor, upstreamVersion='latest')]]:
                     with self.assertRaisesRegex(ValueError, 'commitment'):
                         overlay.apply_package(root, commitment)
-                (root / 'package.json').write_text(json.dumps({'name': 'openclaw', 'version': '2026.10.11'}))
+                (root / 'package.json').write_text(json.dumps({'name': 'openclaw', 'version': '2026.11.3'}))
                 with self.assertRaisesRegex(ValueError, 'exact reviewed'):
                     overlay.apply_package(root, [descriptor])
+            self.assertEqual((root / records[0][0]).read_bytes(), records[0][3].encode())
 
     def test_hard_link_source_is_denied_without_changing_either_name(self):
         with tempfile.TemporaryDirectory(prefix='ct-compat-') as directory:
@@ -96,10 +98,17 @@ class RuntimeCompatibilityTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(data).hexdigest(), after)
                 self.assertEqual(data.count(replacement.encode()), 1)
                 self.assertEqual(hashlib.sha256(data.replace(replacement.encode(), anchor.encode())).hexdigest(), before)
-                added = [line.strip() for line in replacement.splitlines() if line not in anchor.splitlines()]
                 if name in {row[0] for row in overlay.METADATA_PATCHES}:
-                    self.assertEqual(added, ['inputProvenance: params.inputProvenance,',
-                                             'currentSourceTurnId: params.currentSourceTurnId,'])
+                    fields = re.search(
+                        r'inputProvenance:(?P<context>[ce])\.inputProvenance,currentSourceTurnId:(?P<source>[^,]+),',
+                        replacement,
+                    )
+                    self.assertIsNotNone(fields)
+                    self.assertEqual(replacement[:fields.start()] + replacement[fields.end():], anchor)
+                    self.assertEqual(fields.group('source'), {
+                        'c': 'readChannelSourceTurnId(c)',
+                        'e': 'e[Symbol.for("openclaw.channelSourceTurnId")]',
+                    }[fields.group('context')])
 
     @unittest.skipUnless(os.environ.get('CT_OPENCLAW_PACKAGE'), 'requires the exact reviewed SDK package')
     def test_actual_old_v1_bytes_are_not_silently_accepted_or_upgraded(self):
@@ -113,8 +122,9 @@ class RuntimeCompatibilityTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(data).hexdigest(), after)
                 original = data.replace(replacement.encode(), anchor.encode())
                 self.assertEqual(hashlib.sha256(original).hexdigest(), before)
-                legacy = replacement.splitlines(keepends=True)
-                legacy = ''.join(line for line in legacy if 'currentSourceTurnId:' not in line)
+                legacy, removed = re.subn(r'currentSourceTurnId:[^,]+,', '', replacement)
+                if index == 1:
+                    self.assertEqual(removed, 1)
                 (root / name).write_bytes(original if index == 0 else original.replace(anchor.encode(), legacy.encode()))
             first = root / overlay.PATCHES[0][0]
             original_first = first.read_bytes()

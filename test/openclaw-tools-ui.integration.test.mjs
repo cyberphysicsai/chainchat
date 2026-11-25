@@ -18,6 +18,8 @@ const enabled = process.env.CI === 'true' && runtimePackage && runtimeNode && ex
 const application = path.resolve(process.env.CT_CHAINCHAT_PACKAGE || fileURLToPath(new URL('..', import.meta.url)));
 const ANSWER = 'The disposable fixture request is complete. I will report only the verified local results.';
 const READ_MARKER = 'CHAINCHAT_UI_READ_MARKER', EXEC_MARKER = 'CHAINCHAT_UI_EXEC_MARKER';
+const EDIT_MARKER = 'CHAINCHAT_UI_EDIT_MARKER', WRITE_MARKER = 'CHAINCHAT_UI_WRITE_MARKER';
+const PROJECT_TOOLS = ['edit', 'exec', 'read', 'write'];
 
 function* strings(value) {
   if (typeof value === 'string') yield value;
@@ -58,7 +60,7 @@ function assertGrant(requests, expected) {
       'Static identity metadata must not contradict the current per-turn grant.');
     assert.equal(context.hostToolGrant.enabled, expected);
     assert.deepEqual(context.hostProcessContext.releaseReview, { semantic: true, native: true });
-    for (const name of ['read', 'exec']) {
+    for (const name of PROJECT_TOOLS) {
       assert.equal(context.hostProcessContext.toolScope.external.includes(name), expected,
         `Current verified scope must describe ${name} truthfully.`);
       if (expected) assert.ok(names.includes(name) || names.includes('tool_call'), `${name} must have a callable model schema.`);
@@ -99,6 +101,7 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
   });
   await fs.mkdir(workspace);
   const readFile = path.join(workspace, 'read-input.txt'), execFile = path.join(workspace, 'exec-marker.txt');
+  const writeFile = path.join(workspace, 'write-marker.txt');
   await fs.writeFile(readFile, READ_MARKER + '\n');
   await engine({ op: 'init', root, name: 'Tool Grant Fixture' });
   const chainFile = path.join(root, 'chain', 'rings.jsonl'), genesisBytes = await fs.readFile(chainFile);
@@ -131,6 +134,12 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       return result;
     },
     review: async (_config, args) => {
+      if (args.reviewPurpose === 'action') {
+        const { tool } = JSON.parse(args.candidate);
+        if (tool.name === 'edit') assert.equal((await fs.readFile(readFile, 'utf8')).trim(), READ_MARKER);
+        if (tool.name === 'write') await assert.rejects(fs.stat(writeFile), { code: 'ENOENT' });
+        if (tool.name === 'exec') await assert.rejects(fs.stat(execFile), { code: 'ENOENT' });
+      }
       const result = { approved: true, decision: 'approve', usedRings: [],
         scores: Object.fromEntries(DIMENSIONS.map(key => [key, 240])),
         fruits: Object.fromEntries(FRUITS.map(key => [key, 240])),
@@ -249,11 +258,10 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       assert.equal(verifiedContext(turn[0].body).hostToolGrant.nativeCapabilities.enabled, true);
       assertGatewayStable();
     });
-    await t.test('actual primary form Apply exposes and executes read and shell under both PoI reviews', async () => {
+    await t.test('actual primary form Apply exposes and executes project read, edit, write and shell under both PoI reviews', async () => {
       assertGatewayStable();
       await page.locator('#nativeToolsEnabled').check();
-      await page.locator('#nativeToolChoices [data-host-tool="read"]').check();
-      await page.locator('#nativeToolChoices [data-host-tool="exec"]').check();
+      for (const name of PROJECT_TOOLS) await page.locator(`#nativeToolChoices [data-host-tool="${name}"]`).check();
       await page.locator('#nativeToolRoots').fill(workspace);
       await page.locator('#nativeExecutionAllowed').check();
       await page.locator('#nativeToolsAcknowledged').check();
@@ -261,22 +269,28 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       await page.locator('#nativeToolsForm button[type="submit"]').click();
       const response = await saved, body = await response.json(); assert.equal(response.status(), 200, JSON.stringify(body));
       assert.equal(body.toolAuthority.grant.enabled, true);
-      assert.deepEqual([...body.toolAuthority.grant.tools].sort(), ['exec', 'read']);
+      assert.deepEqual([...body.toolAuthority.grant.tools].sort(), PROJECT_TOOLS);
       assert.deepEqual(body.toolAuthority.grant.roots, [workspace]);
       await page.waitForFunction(() => !document.getElementById('nativeToolsForm').inert && document.getElementById('nativeToolsEnabled').checked);
       assert.match(await page.locator('#nativeToolScopeStatus').textContent(), /saved|enabled|available|active|granted/i);
       const beforeNative = nativeCalls.length, beforeReviews = reviews.length;
-      toolPlan.push({ name: 'read', args: { path: readFile } },
+      const replacements = [{ oldText: READ_MARKER, newText: EDIT_MARKER }];
+      toolPlan.push({ name: 'read', args: { path: readFile, cursor: 0 } },
+        { name: 'edit', args: { path: readFile, edits: replacements } },
+        { name: 'write', args: { path: writeFile, content: WRITE_MARKER + '\n' } },
         { name: 'exec', args: { command: 'echo CHAINCHAT_UI_EXEC_MARKER > exec-marker.txt', workdir: workspace } });
-      const turn = await chat('Read the permitted fixture file, then run the permitted fixture marker command in its workspace.');
+      const turn = await chat('Read and edit the fixture file, write a second fixture file, and run the permitted marker command in its workspace.');
       assert.equal(toolPlan.length, 0); assertGrant(turn, true);
+      assert.equal((await fs.readFile(readFile, 'utf8')).trim(), EDIT_MARKER, 'Native edit must apply the exact reviewed replacement.');
+      assert.equal((await fs.readFile(writeFile, 'utf8')).trim(), WRITE_MARKER, 'Native write must create the exact reviewed contents.');
       assert.equal((await fs.readFile(execFile, 'utf8')).trim(), EXEC_MARKER, 'The real native shell must create the marker.');
       const results = turn.flatMap(item => item.body.messages.filter(message => message.role === 'tool'));
       assert.ok(results.some(message => JSON.stringify(message.content).includes(READ_MARKER)), 'Actual read output must return to the model.');
-      for (const name of ['read', 'exec']) {
+      for (const name of PROJECT_TOOLS) {
         const actionReview = reviews.slice(beforeReviews).find(({ args }) => args.reviewPurpose === 'action' &&
           JSON.parse(args.candidate).tool?.name === name);
         assert.ok(actionReview?.result.approved, `${name} must pass independent semantic action review.`);
+        if (name === 'edit') assert.deepEqual(JSON.parse(actionReview.args.candidate).tool.params, { path: readFile, edits: replacements });
         const native = nativeCalls.slice(beforeNative).find(({ request }) => request.op === 'evaluate_action' &&
           JSON.parse(request.output).tool?.name === name);
         assert.equal(native?.result.accepted, true, `${name} must pass the actual Python action gate.`);

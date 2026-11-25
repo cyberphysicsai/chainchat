@@ -1,14 +1,14 @@
 {
   "format": 1,
   "openclaw": {
-    "version": "2026.11.3",
-    "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.11.3.tgz",
-    "integrity": "sha512-FBq/q0TCaoA2b7qfdV0q81fHhI6RBB1zAQfJQREc1u2TlK5khVgCUsAlXskLWthyVqRz5PWEj+oOmfYgK58dHg==",
+    "version": "2026.11.10",
+    "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.11.10.tgz",
+    "integrity": "sha512-/FKDjxY1ZdUSXHx1a9b4EUpPRZywM3uv4181g22XImJfp/5+h+fFUZ7B7HthNrdYzq//05zH0Yf7mefzIlWFaQ==",
     "license": "MIT",
     "upstream": "https://github.com/openclaw/openclaw",
-    "modifications": "Original npm archive retained. Installed runtime applies exact early-hook provenance and API-key channel policy overlays plus the embedded-zod-size-caps-v1 security backport. The private npm dependency and installer bootstrap use separately attested security backports and a verified ip-address archive.",
-    "release": "https://github.com/openclaw/openclaw/releases/tag/v2026.11.3",
-    "releaseCommit": "847611dcaa3bf0e2783335f961dd1fd0580e4d9f"
+    "modifications": "Original npm archive retained. The managed installation attests early-hook provenance, API-key channel policy, and the embedded Zod size-cap backport for Chrome DevTools MCP. The private npm dependency and installer bootstrap use separately verified security backports and a verified ip-address archive.",
+    "release": "https://github.com/openclaw/openclaw/releases/tag/v2026.11.10",
+    "releaseCommit": "6ea542fd97e2876aa4c871ccc494ed5419a03c5c"
   },
   "windowsX64": {
     "node": {
@@ -115,38 +115,38 @@
   "runtimeCompatibilityOverlays": [
     {
       "id": "early-hook-input-provenance-v2",
-      "upstreamVersion": "2026.11.3",
+      "upstreamVersion": "2026.11.10",
       "files": [
         {
-          "path": "dist/embedded-agent-F7NpHcMm.mjs",
-          "originalSha256": "b5ceac9f43ddedf372fc994a4ded3a0b10ce79aeea8520316c7a08eb9cb07d78",
-          "sha256": "ca25bb54487aef08352019ccae8abba67cd6b1b0ecddf39a4626881d2eceef3b"
+          "path": "dist/embedded-agent-CSEHHQp1.mjs",
+          "originalSha256": "b704e9fb2490d409679480874c75827561a4d37afcbd3703871e747f02000ecd",
+          "sha256": "cdaf10bfda63955c06e5d8502ad2fbd5d11ce849a97f8a47c90196b7bb6f659e"
         },
         {
-          "path": "dist/cli-runner-DR6cu3XG.mjs",
-          "originalSha256": "93908e0144dd44781aa0bf66b0d984dd397232eb35d18bca3120d7ef899b13bc",
-          "sha256": "a7794c68daf999cdbf686a931f7707632fb9058f4721c1088bd4f7e361ea8a47"
+          "path": "dist/cli-runner-D2YzRdD1.mjs",
+          "originalSha256": "04ad041e1393cc3a7e79ec55169b7975db984440b65dfbede4edb5f6f8e31edc",
+          "sha256": "1cb77261f6975f8c3dcf9ea491aa54d66045938acdf97e712cd8ab970b6619e5"
         }
       ]
     },
     {
       "id": "api-key-channel-auth-v1",
-      "upstreamVersion": "2026.11.3",
+      "upstreamVersion": "2026.11.10",
       "files": [
         {
-          "path": "dist/provider-auth-login-flow-runtime-B18ky3JD.mjs",
-          "originalSha256": "9fe0edd695bbcc8bcee55f3e62d532251ca51ccdc9737b3f39a979aa31826085",
-          "sha256": "de9f6aac48d84f1754fdd6fda69802d0d6ef0908b2c053db61bcf21a6a92acab"
+          "path": "dist/provider-auth-login-flow-runtime-BQWiIgu2.mjs",
+          "originalSha256": "6d70a5a4e381c34b35673f96f314c7cd5cca47c60694a25f27b2bbe02fcf0ac2",
+          "sha256": "0b4357ae27c1f30303e0304c9820cdc507815d4e0bc38fd35952f28997d201a7"
         },
         {
-          "path": "dist/commands-registry.data-B0OqwBdv.mjs",
-          "originalSha256": "425b577731f45a7c7cf5bf213af873e21f34b1992196735e44b8fa64a34b0c98",
-          "sha256": "10fd5e8c4b8b6d90670a98e6c4d8a7d4c6d737fafac933fa91b9366e133e357c"
+          "path": "dist/commands-registry.data-BY7QvkMn.mjs",
+          "originalSha256": "2c3d0bae58985654be4bd2abc534957689d4ddc20fefadd82bbe7900338c4b49",
+          "sha256": "9168a8311b80b9378334c32e5bc7cf302e05bea7677b9f71984485468f7db252"
         },
         {
-          "path": "dist/models-auth-status-DnznMCDh.mjs",
-          "originalSha256": "05bbabd1db046df80dcc16d3918d829b9410f1fe24fcba69b28c41ce2122ce8f",
-          "sha256": "87bcad538cf9378e739c92a2c48107c9a6813b1c89e1c5aafd39549fd55b4662"
+          "path": "dist/models-auth-status-DajZt9YG.mjs",
+          "originalSha256": "1806a063b5b857e20acfaf3fb924d8ccde8aaa87533359a5832e6e13db70444c",
+          "sha256": "a31adfb4b4708932c5cd6f8a979efbe01ab2cce33a8f85d03e12d02fde0d4402"
         }
       ]
     }
@@ -236,98 +236,13 @@
   "runtimeSecurityOverlays": [
     {
       "id": "embedded-zod-size-caps-v1",
-      "upstreamVersion": "2026.11.3",
+      "upstreamVersion": "2026.11.10",
       "fixCommit": "a0ebf970f2d752e5f58527cd2942ff48be4f46bd",
       "files": [
         {
-          "path": "dist/agents/harness/native-hook-relay-client.worker.js",
-          "originalSha256": "4e22689c48f92af58ef929506cbcfe869c19805fd8cff5cee7897e088559425a",
-          "sha256": "5c0c9a671150817f61c13362f3a200e2f3edc1d4437f6fb1529354b86081a511"
-        },
-        {
-          "path": "dist/compile-wI2qQAAF.mjs",
-          "originalSha256": "be8c3a8f65e20bcdf5c1bfc84597aef6a0ea308c7214bda413b4932d7ec2ddf5",
-          "sha256": "5a0a69310f79e3ad0bec34a098878da9bc60eb8061a40c4bd01d37d2e906efcc"
-        },
-        {
-          "path": "dist/config-doctor/schemas-C5K39dqU.js",
-          "originalSha256": "08b8259d210c3f0af9651891186de143804d09dc7e3cfd3eade553166bddfbdc",
-          "sha256": "408936ae1c700227667224b050c3fde90f745d16cfd166d1f7d623b2a31ad1d4"
-        },
-        {
-          "path": "dist/extensions/a2a/.setup/channel-base-BbG6akl6.mjs",
-          "originalSha256": "219dc4d2bdecc56f40f854db56c71c11374cafbedadfa5ed9ab4619cb59b0961",
-          "sha256": "4ee422c8a7f6d37721af371c473cc41344b5940f0371889a174e4c0e84734bbc"
-        },
-        {
-          "path": "dist/extensions/openai/capability-catalog.js",
-          "originalSha256": "4e63dec6972c5221603b3c06f995ef3bce0dd72e130a42fcebef201f26f08cc4",
-          "sha256": "17c17b450c22311bde0145a67e5b2a4b440d63f8013af55161754d685d82b802"
-        },
-        {
-          "path": "dist/extensions/reef/.setup/channel-plugin-api-BUIz9qeQ.mjs",
-          "originalSha256": "98d058f7f7ca3d909fbaf477c835411e8c49fb02b222ce992e15e5f75d3760bf",
-          "sha256": "ddebf82fb27b960c636668f964a95d3b63f759ac66fa86be17b334dd92636780"
-        },
-        {
-          "path": "dist/extensions/telegram/.setup/setup-plugin-api-DpPS-T6k.mjs",
-          "originalSha256": "d2466d085de8c777fb35e38a7584e17f8fab152b93fd54b13fb4594553b29424",
-          "sha256": "cf60869ad6954df5c0365cca075dd0f881b9d96608a8fd8d14cfa33f42bbbbf2"
-        },
-        {
-          "path": "dist/infra/gateway-state-owner-heartbeat.worker.js",
-          "originalSha256": "714d248a71822f8daab718aeeba3410d9a8fd9b092155bea1ffcf8c79cf4ef8c",
-          "sha256": "3e79a227d4dd540ddda7a9e226bc6a9fbc979830782c30976410fb48e95fbd24"
-        },
-        {
-          "path": "dist/infra/sqlite-readonly-schemas-CYdKD5YK.mjs",
-          "originalSha256": "3c680f49fd5e4df9e0191243949fd892690994ca5df6258fbc2c8f92eca21c84",
-          "sha256": "d67359de9fa51c3f3faee70616ee65806c8f49af0d346b871eb3d5c9a8025bb4"
-        },
-        {
-          "path": "dist/json-schema-processors-C6KO_BFy.mjs",
-          "originalSha256": "378fbcb16414bea6b37618814fcc9d549f4d75cb39ede64d2e87152b90916e54",
-          "sha256": "84934ad5cb447fff4972de40b159082ab984f5994381cc8417c7dda6b862e1df"
-        },
-        {
-          "path": "dist/managed-handoff-runtime.mjs",
-          "originalSha256": "b16501053708e8b5c5379db163fb1598b4bd7c8e61261c9895c366129f315eb9",
-          "sha256": "04938f29d9b39c6b32f355f59728d628649525b4464a902919141a8cb2572f57"
-        },
-        {
-          "path": "dist/native-hook-relay/worker-task-pool-Cn7mBBG4.mjs",
-          "originalSha256": "51541bc53b38728007b78aedebda4ac4c474503793fab91cdada700e6c15894d",
-          "sha256": "2e2bb1550ef5b39f7cb8f57b3cab7690be872318d4a647219172932b2bbfe524"
-        },
-        {
-          "path": "dist/package-update-activation-recovery.mjs",
-          "originalSha256": "fb6828ca5b78a0255b923143786bb03179194e2e040c3b2d09fb32aa8d086999",
-          "sha256": "087c29b61e71ca3f4cb7160705ede8807ac684697884fe2f5c778dcbe5ff6d67"
-        },
-        {
-          "path": "dist/process/supervisor/service-child-group-anchor.js",
-          "originalSha256": "dd9c7da91b967ade6b2b5928cfe9369228ec531728c3fa6e821b79b8a9561637",
-          "sha256": "b3c7408cc3770d7ffaea7b9128762026c5ea476bdd65dba650b82beb4e6cd8f9"
-        },
-        {
-          "path": "dist/state-retention/openclaw-state-db-cache-CaDjHBot.js",
-          "originalSha256": "3fefdbfe7828164c9ed5fd704a0c7eb9a7cda50bd5a4bf315be0182584fca937",
-          "sha256": "48fb105b43614df641c2f20cdb30a99202e5be0d92d5b07c955ab0f0338250d0"
-        },
-        {
-          "path": "dist/state/openclaw-state-lease-heartbeat.worker.js",
-          "originalSha256": "51b504cc0f5d757dbfa4109b5101000686ab9f5a89ab6cd40e9bbd4713d6000d",
-          "sha256": "94ce51aa2b0a9089b38a5196596f814f67a7d91ebe7bc91d1bafd2bbe2928d6f"
-        },
-        {
-          "path": "dist/state/openclaw-state-read-schemas-D2seJkFD.mjs",
-          "originalSha256": "0f2f394e7266b62cd5819407cd971e7d79e98af215cb81ea0754b6e84eb6dc19",
-          "sha256": "bac0b0fe0c012a93f494c0ae71bc9c6e1a9ab2b031f3218882a99cb91e1b84a8"
-        },
-        {
           "path": "node_modules/chrome-devtools-mcp/build/src/third_party/index.js",
-          "originalSha256": "c988e0684584b75e87ae04b768c4f8ae7064401afe5187ec0d4878b2c6833f12",
-          "sha256": "88ab4806cb6dafffc1f8f29d754472a90d8748a47189ca723c685c3c91f6c444"
+          "originalSha256": "e1752f75684b672362dc3ae77a399407c509b76471fca08f967fc44fe2cb267b",
+          "sha256": "003dca1baa7c6c22daaa843f3b387574e6f2ede044eeb77658950305927400b6"
         }
       ]
     }

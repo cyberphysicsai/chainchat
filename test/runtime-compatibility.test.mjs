@@ -31,6 +31,10 @@ test('runtime rejects a modified source commitment before reading SDK files',asy
   const legacy=structuredClone(pins);legacy.runtimeCompatibilityOverlays[0].id='early-hook-input-provenance-v1';
   await fs.writeFile(path.join(root,'upstream-lock.json'),JSON.stringify(legacy));
   await assert.rejects(isolated.assertRuntimeCompatibility(root),/commitment/);
+  const previous=structuredClone(pins);
+  for(const group of previous.runtimeCompatibilityOverlays)group.upstreamVersion='2026.11.3';
+  await fs.writeFile(path.join(root,'upstream-lock.json'),JSON.stringify(previous));
+  await assert.rejects(isolated.assertRuntimeCompatibility(root),/commitment/);
 });
 
 test('real pinned metadata overlay passes doctor and changed bytes or link ownership fail',{
@@ -42,7 +46,7 @@ test('real pinned metadata overlay passes doctor and changed bytes or link owner
   for(const row of pins.runtimeCompatibilityOverlays.flatMap(group=>group.files)){await fs.mkdir(path.dirname(path.join(root,row.path)),{recursive:true});await fs.copyFile(path.join(process.env.CT_OPENCLAW_PACKAGE,row.path),path.join(root,row.path));}
   assert.deepEqual(await assertRuntimeCompatibility(root),pins.runtimeCompatibilityOverlays);
   const first=path.join(root,pins.runtimeCompatibilityOverlays[0].files[0].path),bytes=await fs.readFile(first);
-  const legacy=bytes.toString('utf8').replace(/^\t+currentSourceTurnId: params\.currentSourceTurnId,\n/mu,'');
+  const legacy=bytes.toString('utf8').replace('currentSourceTurnId:readChannelSourceTurnId(c),','');
   assert.notEqual(legacy,bytes.toString('utf8'));
   await fs.writeFile(first,legacy);
   await assert.rejects(assertRuntimeCompatibility(root),/missing or changed/,'Old v1 metadata bytes are not a supported installed v2 runtime.');
@@ -61,7 +65,7 @@ test('pinned channel login is held before auth work and native status skips usag
   const overlays=await assertRuntimeCompatibility(packageRoot);
   const [flow,registry,status]=overlays.find(row=>row.id==='api-key-channel-auth-v1').files;
   const load=row=>import(pathToFileURL(path.join(packageRoot,row.path)).href);
-  const {o:prepareProviderChannelLogin}=await load(flow);
+  const {i:prepareProviderChannelLogin}=await load(flow);
   const never=()=>{throw new Error('Unadmitted provider auth work ran.');};
   for(const commandText of ['/login','/login codex','/login refresh','/login choice test','/login cancel']){
     const result=await prepareProviderChannelLogin({commandText,refreshAuth:never,answerChoice:never,cancelLogin:never});
@@ -74,6 +78,6 @@ test('pinned channel login is held before auth work and native status skips usag
   assert.ok(keys.includes('model'));
   assert.ok(!keys.includes('login'));
   const authStatus=await fs.readFile(path.join(packageRoot,status.path),'utf8');
-  assert.doesNotMatch(authStatus,/\b(?:getProviderUsageRuntimeSnapshot|readProviderUsageStaleWhileRevalidate)\(/u);
-  assert.match(authStatus,/"models\.authStatus": async/u);
+  assert.doesNotMatch(authStatus,/\b(?:getProviderUsageRuntimeSnapshot|readProviderUsage)\(/u);
+  assert.match(authStatus,/"models\.authStatus":async/u);
 });

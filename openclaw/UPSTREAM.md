@@ -2,8 +2,8 @@
 
 OpenClaw is a pinned runtime dependency, not a copied source tree. Most ChainChat
 changes live in this application's plugin, launcher, adapter and UI. One explicit
-metadata-only overlay forwards existing `params.inputProvenance` and
-`params.currentSourceTurnId` into the same two early hook contexts in the
+metadata-only overlay forwards existing `inputProvenance` and the upstream
+channel-source turn identifier into the two early hook contexts in the
 extracted runtime. The original npm archive/SRI remains
 unchanged; the installed files have separately committed original and final
 SHA-256 values. A separate API-key policy overlay holds built-in channel
@@ -12,7 +12,7 @@ package. The canonical Timechain engine has its own
 independent source commitment and compatibility tests.
 
 Two security backports have separate installed-file commitments:
-`runtimeSecurityOverlays` covers the 18 embedded Zod files, while
+`runtimeSecurityOverlays` covers the remaining embedded Zod copy in Chrome DevTools MCP, while
 `npmSecurityOverlays` covers ten files in npm's private dependency tree.
 The Glob default-entry shims use its same-version raw exports; its raw walker
 and standalone Minimatch retain the existing APIs with reviewed upstream fixes.
@@ -43,7 +43,7 @@ in the same file. Setup refuses a different upstream version or damaged archive.
 Windows uses the official embeddable CPython 3.15.2 archive. macOS and Linux
 use Astral's CPython 3.15.2 standalone builds from its 20261026 release.
 
-`runtimeCompatibilityOverlays` records two exact groups for OpenClaw 2026.11.3.
+`runtimeCompatibilityOverlays` records two exact groups for OpenClaw 2026.11.10.
 `early-hook-input-provenance-v2` covers two early hook files.
 `api-key-channel-auth-v1` covers the shared raw `/login` dispatch, built-in
 command registry and native auth-status handler. The installer validates all

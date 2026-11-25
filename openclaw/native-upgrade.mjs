@@ -8,7 +8,13 @@ import {createHash, randomUUID} from 'node:crypto';
 import {assertManagedRuntime} from './runtime-security.mjs';
 
 const execute = promisify(execFile), tickets = new WeakMap();
-const PIN = '2026.11.3', MAX_FILES = 20000, MAX_BYTES = 2 * 1024 ** 3;
+const PIN = '2026.11.10', MAX_FILES = 20000, MAX_BYTES = 2 * 1024 ** 3;
+// Only the database generations shipped by supported ChainChat releases and
+// the exact current versions declared by the pinned OpenClaw package.
+const schemas = {global: {previous: [20, 22], current: 40}, agent: {previous: [25, 27], current: 42}};
+const knownSchema = (role, version) => Object.hasOwn(schemas, role) &&
+  (version === schemas[role].current || schemas[role].previous.includes(version));
+const needsUpgrade = row => row.version !== schemas[row.role].current;
 const error = (code = 'MIGRATION_REQUIRED') => Object.assign(new Error(code === 'MIGRATION_FAILED'
   ? 'The offline native upgrade did not complete. Its private pre-upgrade backup was retained; inspect recovery before retrying.'
   : 'The native state needs a supported offline migration or local inspection before startup.'), {code,status:503});
@@ -120,7 +126,7 @@ async function inspectFacts(directory, run) {
         const valid=integrity.length===1&&Object.values(integrity[0])[0]==='ok';
         if(!meta||!valid||meta.role!==file.role||meta.schema_version!==version||
           file.role==='agent'&&meta.agent_id!==file.agentId||file.role==='global'&&meta.agent_id!==null)throw error();
-        if(![...(file.role==='global'?[20,22]:[25,27])].includes(version))throw error();
+        if(!knownSchema(file.role,version))throw error();
         facts.push({...file,version,sha256:copied.sha256,integrityOk:true});
       } finally{db.close();}
     }
@@ -132,21 +138,26 @@ export function classifyNativeUpgrade(lint,facts) {
   if(!plain(lint)||lint.schemaVersion!==1||typeof lint.ok!=='boolean'||!Array.isArray(lint.findings)||lint.findings.length>256)throw error();
   if(!Array.isArray(facts)||facts.length>129||facts.filter(row=>row.role==='global').length>1)throw error();
   const keys=new Set();
-  for(const row of facts){const key=row.role==='global'?'global':row.agentId;
-    if(!plain(row)||row.integrityOk!==true||keys.has(key)||
-      !(row.role==='global'&&[20,22].includes(row.version)||row.role==='agent'&&agentId(row.agentId)&&[25,27].includes(row.version)))throw error();
+  for(const row of facts){
+    if(!plain(row)||row.integrityOk!==true||
+      !knownSchema(row.role,row.version)||row.role==='agent'&&!agentId(row.agentId))throw error();
+    const key=row.role==='global'?'global':'agent:'+row.agentId;
+    if(keys.has(key))throw error();
     keys.add(key);}
-  const shared=facts.find(row=>row.role==='global'),old=facts.filter(row=>row.role==='agent'&&row.version===25);
+  const shared=facts.find(row=>row.role==='global'&&needsUpgrade(row));
+  const old=facts.filter(row=>row.role==='agent'&&needsUpgrade(row));
   let pending=false;const allowed=new Set();
   for(const finding of lint.findings) {
     if(!plain(finding)||!['info','warning','error'].includes(finding.severity))throw error();
     if(finding.severity==='info')continue;
-    if(finding.checkId==='core/doctor/state-schema'&&finding.requirement==='state-schema-migration-pending'&&finding.severity==='warning'&&shared?.version===20){pending=true;continue;}
+    if(finding.checkId==='core/doctor/state-schema'&&finding.requirement==='state-schema-migration-pending'&&finding.severity==='warning'&&shared&&
+      typeof finding.message==='string'&&finding.message.includes(`Shared state schema migration pending (${shared.version} → ${schemas.global.current})`)){pending=true;continue;}
     if(finding.checkId==='core/doctor/agent-database-admission'&&finding.requirement==='agent-database-inspection-failed'&&finding.severity==='warning'&&
-      old.some(row=>row.agentId===finding.target)&&typeof finding.message==='string'&&finding.message.includes('uses schema version 25; stop active agents and run openclaw doctor --fix to migrate session identities before using it.')){allowed.add(finding.target);continue;}
+      typeof finding.message==='string'&&old.some(row=>row.agentId===finding.target&&finding.message.includes(
+        `uses schema version ${row.version}; stop active agents and run openclaw doctor --fix to upgrade it to schema version ${schemas.agent.current} before using it.`))){allowed.add(finding.target);continue;}
     throw error();
   }
-  if(shared?.version===20&&!pending||old.some(row=>!pending&&!allowed.has(row.agentId)))throw error();
+  if(shared&&!pending||old.some(row=>!pending&&!allowed.has(row.agentId)))throw error();
   return pending||old.length>0;
 }
 async function inventory(directory) {
@@ -184,7 +195,8 @@ async function backupDirectory(directory,run,facts) {
 function receiptPath(directory){return path.join(path.dirname(directory),'.'+path.basename(directory)+'-native-upgrade.json');}
 async function assertPin(packageRoot) {
   const info=JSON.parse(await fs.readFile(path.join(packageRoot,'package.json'),'utf8'));
-  if(info.name!=='openclaw'||info.version!==PIN)throw error();
+  if(info.name!=='openclaw'||info.version!==PIN||info.openclaw?.schemaVersions?.state!==schemas.global.current||
+    info.openclaw?.schemaVersions?.agent!==schemas.agent.current)throw error();
   await assertManagedRuntime(packageRoot);
 }
 export async function prepareNativeUpgrade({directory,packageRoot,nodePath=process.execPath,onDiagnostic,runCommand=command,verifyRuntime=assertPin}={}) {
@@ -200,7 +212,7 @@ export async function prepareNativeUpgrade({directory,packageRoot,nodePath=proce
     if(prior.status!=='complete')throw error('MIGRATION_FAILED');
   }
   const facts=await inspectFacts(directory,runCommand);
-  const required=facts.some(row=>row.version===(row.role==='global'?20:25));
+  const required=facts.some(needsUpgrade);
   if(!required){const ticket=Object.freeze({required:false,status:facts.length?'current':'fresh',backup:null});tickets.set(ticket,{done:true});return ticket;}
   await verifyRuntime(packageRoot);
   let backup;try{backup=await backupDirectory(directory,runCommand,facts);}catch{throw error('MIGRATION_FAILED');}
@@ -244,7 +256,7 @@ export async function completeNativeUpgrade(ticket,{environment,reprojectManaged
     const after=lintPayload(await runCommand(nodePath,lintArgs,{cwd:directory,env,timeout:120000}));
     const current=await inspectFacts(directory,runCommand);
     const identity=rows=>JSON.stringify(rows.map(row=>row.role==='global'?'global':'agent:'+row.agentId).sort());
-    if(!after.ok||classifyNativeUpgrade(after,current)||identity(current)!==identity(facts)||current.some(row=>row.version!==(row.role==='global'?22:27)))throw error('MIGRATION_FAILED');
+    if(!after.ok||classifyNativeUpgrade(after,current)||identity(current)!==identity(facts)||current.some(needsUpgrade))throw error('MIGRATION_FAILED');
     await atomicJson(receiptPath(directory),{...receipt,status:'complete',completedAt:new Date().toISOString()});context.done=true;
     onDiagnostic?.('[chainchat] native upgrade: supported schemas verified; normal enforced startup continues\n');
     return {status:'migrated',migrationRan:true,backupId:backup.id};

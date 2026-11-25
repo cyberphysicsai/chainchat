@@ -14,67 +14,50 @@ from pathlib import Path
 import stat
 import uuid
 
-VERSION = '2026.11.3'
+VERSION = '2026.11.10'
 IDENTITY = 'early-hook-input-provenance-v2'
+# The SDK stores the source turn ID under its native channel-source symbol.
+# Forward only that typed value and input provenance through the same early
+# before_agent_reply context. A missing symbol remains undefined.
 METADATA_PATCHES = (
-    ('dist/embedded-agent-F7NpHcMm.mjs',
-     'b5ceac9f43ddedf372fc994a4ded3a0b10ce79aeea8520316c7a08eb9cb07d78',
-     'ca25bb54487aef08352019ccae8abba67cd6b1b0ecddf39a4626881d2eceef3b',
-     '\t' * 9 + 'trigger: params.trigger,\n' + '\t' * 9 + '...buildAgentHookContextChannelFields(params),',
-     '\t' * 9 + 'trigger: params.trigger,\n' + '\t' * 9 + 'inputProvenance: params.inputProvenance,\n' + '\t' * 9 + 'currentSourceTurnId: params.currentSourceTurnId,\n' + '\t' * 9 + '...buildAgentHookContextChannelFields(params),'),
-    ('dist/cli-runner-DR6cu3XG.mjs',
-     '93908e0144dd44781aa0bf66b0d984dd397232eb35d18bca3120d7ef899b13bc',
-     'a7794c68daf999cdbf686a931f7707632fb9058f4721c1088bd4f7e361ea8a47',
-     '\t' * 3 + 'heartbeatEventQueueSessionKey: params.heartbeatEventQueueSessionKey,\n' + '\t' * 3 + 'sessionId: params.sessionId,',
-     '\t' * 3 + 'heartbeatEventQueueSessionKey: params.heartbeatEventQueueSessionKey,\n' + '\t' * 3 + 'inputProvenance: params.inputProvenance,\n' + '\t' * 3 + 'currentSourceTurnId: params.currentSourceTurnId,\n' + '\t' * 3 + 'sessionId: params.sessionId,'),
+    ('dist/embedded-agent-CSEHHQp1.mjs',
+     'b704e9fb2490d409679480874c75827561a4d37afcbd3703871e747f02000ecd',
+     'cdaf10bfda63955c06e5d8502ad2fbd5d11ce849a97f8a47c90196b7bb6f659e',
+     'trigger:c.trigger,...buildAgentHookContextChannelFields(c)',
+     'trigger:c.trigger,inputProvenance:c.inputProvenance,currentSourceTurnId:readChannelSourceTurnId(c),'
+     '...buildAgentHookContextChannelFields(c)'),
+    ('dist/cli-runner-D2YzRdD1.mjs',
+     '04ad041e1393cc3a7e79ec55169b7975db984440b65dfbede4edb5f6f8e31edc',
+     '1cb77261f6975f8c3dcf9ea491aa54d66045938acdf97e712cd8ab970b6619e5',
+     'trigger:e.trigger,...buildAgentHookContextChannelFields(e),'
+     '...buildAgentHookContextIdentityFields(e)},onDispatch:',
+     'trigger:e.trigger,inputProvenance:e.inputProvenance,'
+     'currentSourceTurnId:e[Symbol.for("openclaw.channelSourceTurnId")],'
+     '...buildAgentHookContextChannelFields(e),...buildAgentHookContextIdentityFields(e)},onDispatch:'),
 )
 POLICY_PATCHES = (
-    ('dist/provider-auth-login-flow-runtime-B18ky3JD.mjs',
-     '9fe0edd695bbcc8bcee55f3e62d532251ca51ccdc9737b3f39a979aa31826085',
-     'de9f6aac48d84f1754fdd6fda69802d0d6ef0908b2c053db61bcf21a6a92acab',
-     '\tif (!match) return null;\n'
-     '\tparams.signal?.throwIfAborted();\n'
-     '\tif (!params.hasAdminScope',
-     '\tif (!match) return null;\n'
-     '\tparams.signal?.throwIfAborted();\n'
-     '\treturn { status: "reply", reply: { text: "Use ChainChat Models to configure a provider API key." } };\n'
-     '\tif (!params.hasAdminScope'),
-    ('dist/commands-registry.data-B0OqwBdv.mjs',
-     '425b577731f45a7c7cf5bf213af873e21f34b1992196735e44b8fa64a34b0c98',
-     '10fd5e8c4b8b6d90670a98e6c4d8a7d4c6d737fafac933fa91b9366e133e357c',
-     '\t\tdefineBuiltinCommand("login", "Connect a model provider.", "management", "standard", {\n'
-     '\t\t\tmodelIndependent: "always",\n'
-     '\t\t\tnativeProviders: [\n'
-     '\t\t\t\t"discord",\n'
-     '\t\t\t\t"slack",\n'
-     '\t\t\t\t"telegram"\n'
-     '\t\t\t],\n'
-     '\t\t\targs: [defineCommandArgument("provider", "Provider or connection method")]\n'
-     '\t\t}),\n'
-     '\t\tdefineBuiltinCommand("openclaw",',
-     '\t\tdefineBuiltinCommand("openclaw",'),
-    ('dist/models-auth-status-DnznMCDh.mjs',
-     '05bbabd1db046df80dcc16d3918d829b9410f1fe24fcba69b28c41ce2122ce8f',
-     '87bcad538cf9378e739c92a2c48107c9a6813b1c89e1c5aafd39549fd55b4662',
-     '\t\t\tconst providerUsageRuntime = await getProviderUsageRuntimeSnapshot({\n'
-     '\t\t\t\tconfig: cfg,\n'
-     '\t\t\t\tagentId,\n'
-     '\t\t\t\tagentDir,\n'
-     '\t\t\t\tstore\n'
-     '\t\t\t});\n'
-     '\t\t\tconst usageByProvider = readProviderUsageStaleWhileRevalidate({\n'
-     '\t\t\t\tagentId,\n'
-     '\t\t\t\tagentDir,\n'
-     '\t\t\t\tauthStore: providerUsageRuntime.store,\n'
-     '\t\t\t\tconfigRef: cfg,\n'
-     '\t\t\t\tcredentialKey: providerUsageRuntime.credentialKey,\n'
-     '\t\t\t\tforceRefresh: refreshRequested,\n'
-     '\t\t\t\tproviderIds: usageProviderIds,\n'
-     '\t\t\t\tnow\n'
-     '\t\t\t});\n'
-     '\t\t\tconst providers = [];',
-     '\t\t\tconst usageByProvider = new Map();\n'
-     '\t\t\tconst providers = [];'),
+    ('dist/provider-auth-login-flow-runtime-BQWiIgu2.mjs',
+     '6d70a5a4e381c34b35673f96f314c7cd5cca47c60694a25f27b2bbe02fcf0ac2',
+     '0b4357ae27c1f30303e0304c9820cdc507815d4e0bc38fd35952f28997d201a7',
+     'if(!t)return null;e.signal?.throwIfAborted();if(!e.hasAdminScope',
+     'if(!t)return null;e.signal?.throwIfAborted();return{status:"reply",'
+     'reply:{text:"Use ChainChat Models to configure a provider API key."}};if(!e.hasAdminScope'),
+    ('dist/commands-registry.data-BY7QvkMn.mjs',
+     '2c3d0bae58985654be4bd2abc534957689d4ddc20fefadd82bbe7900338c4b49',
+     '9168a8311b80b9378334c32e5bc7cf302e05bea7677b9f71984485468f7db252',
+     'defineBuiltinCommand(`login`,`Connect a model provider.`,`management`,`standard`,'
+     '{modelIndependent:`always`,nativeProviders:[`discord`,`slack`,`telegram`],'
+     'args:[defineCommandArgument(`provider`,`Provider or connection method`)]}),'
+     'defineBuiltinCommand(`openclaw`,',
+     'defineBuiltinCommand(`openclaw`,'),
+    ('dist/models-auth-status-DajZt9YG.mjs',
+     '1806a063b5b857e20acfaf3fb924d8ccde8aaa87533359a5832e6e13db70444c',
+     'a31adfb4b4708932c5cd6f8a979efbe01ab2cce33a8f85d03e12d02fde0d4402',
+     'const S=await getProviderUsageRuntimeSnapshot({config:r,agentId:l,agentDir:u,store:d});'
+     'const C={agentId:l,agentDir:u,authStore:S.store,configRef:r,credentialKey:S.credentialKey,'
+     'forceRefresh:a,providerIds:g,now:i};const{usageByProvider:w,'
+     'refreshAt:T}=await readProviderUsage({...C,awaitRefresh:Boolean(e.refreshUsage)});const E=[];',
+     'const w=new Map();const T=void 0;const E=[];'),
 )
 PATCH_GROUPS = ((IDENTITY, METADATA_PATCHES), ('api-key-channel-auth-v1', POLICY_PATCHES))
 PATCHES = tuple(patch for _, group in PATCH_GROUPS for patch in group)

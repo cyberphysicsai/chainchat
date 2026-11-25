@@ -42,7 +42,7 @@ import { isRemovedNativeModel, isRemovedNativeProvider } from './openclaw/plugin
 import { discoverTimechains } from "./openclaw/discovery.mjs";
 import { ToolPermissions, disabledToolAuthority } from "./lib/tool-permissions.mjs";
 import { createAgentSkills } from "./lib/agent-skills.mjs";
-import { validateToolAuthority, SUPPORTED_HOST_TOOLS } from "./lib/tool-authority.mjs";
+import { savedToolDirectoryScope, validateToolAuthority, SUPPORTED_HOST_TOOLS } from "./lib/tool-authority.mjs";
 import { readChainAudit } from "./lib/audit-snapshot.mjs";
 import { createManagedAutomation } from './lib/managed-automation.mjs';
 import { createEmergencyHalt } from './lib/emergency-halt.mjs';
@@ -1225,7 +1225,7 @@ export async function createApp(options = {}) {
     if (pausing.has(identity)) return;
     await exclusive(record, async () => persist(await engine({ op: "inspect", root: record.root })), { control: true });
   }
-  function reviewProcessContext(prepared) {
+  async function reviewProcessContext(prepared) {
     const scope = requestSession.getStore();
     if (!scope?.session || typeof scope.originalInput !== 'string' || scope.plainCall) return null;
     const record = scope.operationRecord || store.agents.find(agent => agent.id === scope.session.agentId);
@@ -1233,11 +1233,12 @@ export async function createApp(options = {}) {
     const identity = scope.nativeIdentity;
     const nativeBound = openclaw && !scope.scratchCandidates && !scope.memoryPaused && identity?.agentId === record.id && identity.genesisHash === prepared.genesis?.hash;
     const grant = nativeBound ? toolPermissions.get(authorityKey(identity)).grant : null;
+    const directoryScope = grant ? await savedToolDirectoryScope(grant, protectedToolRoots()) : null;
     const ownGoal = nativeBound && (scope.nativeGoal || scope.nativeControl?.intent?.kind === 'session-goal-start' ||
       scope.nativeControl?.goalOperation?.action === 'resume');
     return projectHostProcessContext(prepared, { active: true, memoryPaused: scope.memoryPaused === true,
       expectedGenesis: identity?.genesisHash || prepared.genesis?.hash, expectedHead: prepared.head?.hash,
-      externalTools: externalToolNamesForGrant(grant), ownSessionTools: ownGoal ? OWN_SESSION_REVIEW_TOOLS : [] });
+      externalTools: externalToolNamesForGrant(grant && { ...grant, tools: directoryScope.tools }), ownSessionTools: ownGoal ? OWN_SESSION_REVIEW_TOOLS : [] });
   }
   async function assess(
     config,
@@ -1256,7 +1257,7 @@ export async function createApp(options = {}) {
         candidate,
         covenant: prepared.genesis?.covenant || FRUITS,
         trustedAgentContext: prepared.trustedAgentContext || null,
-        hostProcessContext: reviewProcessContext(prepared),
+        hostProcessContext: await reviewProcessContext(prepared),
         perspectives,
         availableEvidence: prepared.availableEvidence || [],
         recentConversation,
@@ -1577,7 +1578,7 @@ export async function createApp(options = {}) {
       const judgment = strictReview(await reviewer(config, {
         input: message, candidate: candidateText, covenant: prepared.genesis.covenant,
         trustedAgentContext: prepared.trustedAgentContext || null,
-        hostProcessContext: reviewProcessContext(prepared),
+        hostProcessContext: await reviewProcessContext(prepared),
         availableEvidence: prepared.availableEvidence || [], recentConversation: conversation, signal, reviewPurpose: 'response',
       }), prepared.availableEvidence || [], 'response');
       return { approved: judgment.approved, scores: judgment.scores, assessment: judgment, usedRings: judgment.usedRings };
@@ -2344,13 +2345,15 @@ export async function createApp(options = {}) {
             const identity = await nativeControlIdentity(session);
             const snapshot = await openclaw.describeControls(identity.agentId ? identity : null);
             const pluginTools = trustedPlugins && identity.agentId ? await trustedPlugins.toolCatalogue({ identity }) : [];
+            const toolAuthority = identity.agentId ? toolPermissions.get(authorityKey(identity)) : { revision: "disabled", grant: disabledToolAuthority() };
+            const directories = await savedToolDirectoryScope(toolAuthority.grant, protectedToolRoots());
             return send(200, { ...snapshot, services: automation ? await automation.status(serviceOwner) : null,
               browserRuntime: browserBootstrap ? await browserBootstrap.status() : null,
               plugins: trustedPlugins ? await trustedPlugins.catalogue() : null,
               nativeToolCatalogue: await nativeCatalogueFor(identity),
               pluginTrustPolicy: 'Explicitly trusted native code; PoI gates model actions, not arbitrary plugin code.',
-              toolAuthority: identity.agentId ? toolPermissions.get(authorityKey(identity)) :
-              { revision: "disabled", grant: disabledToolAuthority() }, toolCatalogue: [...SUPPORTED_HOST_TOOLS.map(name =>
+              toolAuthority, toolDirectories: { available: directories.roots.length, unavailable: directories.unavailable },
+              toolCatalogue: [...SUPPORTED_HOST_TOOLS.map(name =>
                 name === "browser" ? { name, available: !!browserService, description: "Owned browser with individual PoI action review and exact public-host grants" } :
                 name === 'chainchat_automation' ? { name, available: !!automation, description: 'Reviewed management of this agent’s schedules and channel bindings' } : { name, available: true }),
                 ...pluginTools.map(tool => ({ ...tool, available: true }))] });
@@ -2592,7 +2595,7 @@ export async function createApp(options = {}) {
               await requireLocalAccess();
               const grant = await validateToolAuthority({...previous.grant, nativeCapabilities: capabilities}, {
                 protectedRoots: protectedToolRoots(), managedBrowser: !!browserService,
-                pluginTools, nativeTools: catalogue.map(tool => tool.name),
+                pluginTools, nativeTools: catalogue.map(tool => tool.name), preserveSavedDirectories: true,
               });
               await requireLocalAccess();
               return grant;
@@ -2624,7 +2627,8 @@ export async function createApp(options = {}) {
               await requireLocalAccess();
               const grant = await validateToolAuthority({...requested,
                 ...(!Object.hasOwn(requested, 'nativeCapabilities') && current.grant.nativeCapabilities ? {nativeCapabilities: current.grant.nativeCapabilities} : {})},
-                { protectedRoots: protectedToolRoots(), managedBrowser: !!browserService, requireBrowserHosts: true, pluginTools: pluginTools.map(tool => tool.name), nativeTools });
+                { protectedRoots: protectedToolRoots(), managedBrowser: !!browserService, requireBrowserHosts: true,
+                  pluginTools: pluginTools.map(tool => tool.name), nativeTools, preserveSavedDirectories: operation === 'save' && requested.enabled === false });
               await requireLocalAccess();
               return grant;
             });

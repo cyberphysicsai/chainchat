@@ -4,18 +4,18 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 const expected = [
   {id: 'early-hook-input-provenance-v2', files: {
-    'dist/embedded-agent-F7NpHcMm.mjs':['b5ceac9f43ddedf372fc994a4ded3a0b10ce79aeea8520316c7a08eb9cb07d78','ca25bb54487aef08352019ccae8abba67cd6b1b0ecddf39a4626881d2eceef3b'],
-    'dist/cli-runner-DR6cu3XG.mjs':['93908e0144dd44781aa0bf66b0d984dd397232eb35d18bca3120d7ef899b13bc','a7794c68daf999cdbf686a931f7707632fb9058f4721c1088bd4f7e361ea8a47'],
+    'dist/embedded-agent-CSEHHQp1.mjs':['b704e9fb2490d409679480874c75827561a4d37afcbd3703871e747f02000ecd','cdaf10bfda63955c06e5d8502ad2fbd5d11ce849a97f8a47c90196b7bb6f659e'],
+    'dist/cli-runner-D2YzRdD1.mjs':['04ad041e1393cc3a7e79ec55169b7975db984440b65dfbede4edb5f6f8e31edc','1cb77261f6975f8c3dcf9ea491aa54d66045938acdf97e712cd8ab970b6619e5'],
   }},
   {id: 'api-key-channel-auth-v1', files: {
-    'dist/provider-auth-login-flow-runtime-B18ky3JD.mjs':['9fe0edd695bbcc8bcee55f3e62d532251ca51ccdc9737b3f39a979aa31826085','de9f6aac48d84f1754fdd6fda69802d0d6ef0908b2c053db61bcf21a6a92acab'],
-    'dist/commands-registry.data-B0OqwBdv.mjs':['425b577731f45a7c7cf5bf213af873e21f34b1992196735e44b8fa64a34b0c98','10fd5e8c4b8b6d90670a98e6c4d8a7d4c6d737fafac933fa91b9366e133e357c'],
-    'dist/models-auth-status-DnznMCDh.mjs':['05bbabd1db046df80dcc16d3918d829b9410f1fe24fcba69b28c41ce2122ce8f','87bcad538cf9378e739c92a2c48107c9a6813b1c89e1c5aafd39549fd55b4662'],
+    'dist/provider-auth-login-flow-runtime-BQWiIgu2.mjs':['6d70a5a4e381c34b35673f96f314c7cd5cca47c60694a25f27b2bbe02fcf0ac2','0b4357ae27c1f30303e0304c9820cdc507815d4e0bc38fd35952f28997d201a7'],
+    'dist/commands-registry.data-BY7QvkMn.mjs':['2c3d0bae58985654be4bd2abc534957689d4ddc20fefadd82bbe7900338c4b49','9168a8311b80b9378334c32e5bc7cf302e05bea7677b9f71984485468f7db252'],
+    'dist/models-auth-status-DajZt9YG.mjs':['1806a063b5b857e20acfaf3fb924d8ccde8aaa87533359a5832e6e13db70444c','a31adfb4b4708932c5cd6f8a979efbe01ab2cce33a8f85d03e12d02fde0d4402'],
   }},
 ];
 function matchesCommitment(overlay, index) {
   const {id, files} = expected[index], count = Object.keys(files).length;
-  return overlay?.id === id && overlay.upstreamVersion === '2026.11.3' &&
+  return overlay?.id === id && overlay.upstreamVersion === '2026.11.10' &&
     Object.keys(overlay).sort().join(',') === 'files,id,upstreamVersion' &&
     Array.isArray(overlay.files) && overlay.files.length === count &&
     overlay.files.every(row => row && Object.keys(row).sort().join(',') === 'originalSha256,path,sha256' &&

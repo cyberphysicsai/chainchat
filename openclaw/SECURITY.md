@@ -16,10 +16,10 @@ not a sandbox boundary. Its messaging protocol deliberately forwards only fixed
 reads and never sends the model key or parent bearer into the frame.
 
 The original OpenClaw npm archive stays at the exact commitment in
-`upstream-lock.json` (OpenClaw 2026.11.3). The metadata compatibility overlay,
+`upstream-lock.json` (OpenClaw 2026.11.10). The metadata compatibility overlay,
 `early-hook-input-provenance-v2`, forwards
-only existing `inputProvenance: params.inputProvenance` and
-`currentSourceTurnId: params.currentSourceTurnId` into the embedded-agent and CLI
+only existing typed input provenance and the host-owned source-turn identifier
+into the embedded-agent and CLI
 runner's same early hook contexts. These typed native fields preserve private
 asynchronous producer provenance and the framework's original client nonce for
 queued-request correlation before mandatory PoI admission. Text markers and
@@ -51,8 +51,8 @@ attest the replacement separately.
 The managed installation also applies exact-hash upstream security backports.
 They change executable code rather than relabeling versions:
 
-- `runtimeSecurityOverlays` commits 18 files covering OpenClaw's embedded Zod
-  4.6.5 and the browser tool's embedded Zod 4.6.2. The [upstream collection-bounds fix](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd)
+- OpenClaw 2026.11.10 embeds fixed Zod 4.6.7. `runtimeSecurityOverlays` commits
+  the remaining Chrome DevTools MCP copy of Zod 4.6.5. The [upstream collection-bounds fix](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd)
   rejects oversized arrays, maps and sets before evaluating their children, in
   both interpreted and compiled schemas. Leading transforms, backward/skip-check
   behavior, nested issues and ordinary parsing keep the upstream semantics.
@@ -90,8 +90,8 @@ The tests exercise actual vulnerable and patched code, including bounded
 adversarial inputs; setup uses no package lifecycle scripts. CI and documented
 source installs also prepare the secured npm before invoking any npm command.
 
-The November 11, 2026 registry audit of the unmodified published lock metadata
-reports 22 moderate findings and zero high/critical findings, rooted in npm's
+The November 25, 2026 registry audit of the unmodified published lock metadata
+reports 16 moderate findings and zero high/critical findings, rooted in npm's
 bundled Glob/Minimatch closure. That metadata is deliberately preserved and
 still names the original versions; ordinary audit tools do not inspect these
 source backports. Those findings share the two bundled dependency roots. The exact backport

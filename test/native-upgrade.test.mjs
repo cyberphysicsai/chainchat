@@ -10,7 +10,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {prepareNativeUpgrade,completeNativeUpgrade,classifyNativeUpgrade,validateOwnedStateDirectory} from '../openclaw/native-upgrade.mjs';
 
 const execute=promisify(execFile),hash=data=>createHash('sha256').update(data).digest('hex');
-const before={schemaVersion:1,ok:false,checksRun:2,checksSkipped:67,findings:[{checkId:'core/doctor/state-schema',severity:'warning',requirement:'state-schema-migration-pending'}]};
+const before={schemaVersion:1,ok:false,checksRun:2,checksSkipped:67,findings:[{checkId:'core/doctor/state-schema',severity:'warning',requirement:'state-schema-migration-pending',message:'Shared state schema migration pending (20 → 40); run openclaw doctor --fix.'}]};
 const after={schemaVersion:1,ok:true,checksRun:2,checksSkipped:67,findings:[]};
 function createDatabase(file,role,version,owner=null){const db=new DatabaseSync(file);try{
   db.exec('CREATE TABLE schema_meta(meta_key TEXT PRIMARY KEY,role TEXT,schema_version INTEGER,agent_id TEXT); CREATE TABLE retained(value TEXT);');
@@ -23,7 +23,7 @@ async function fixture(t,{current=false,empty=false}={}){
   await fs.mkdir(directory,{mode:0o700});const shared=path.join(directory,'native-state/state'),agent=path.join(directory,'native-state/agents/main/agent');
   await fs.mkdir(shared,{recursive:true,mode:0o700});await fs.mkdir(agent,{recursive:true,mode:0o700});
   const sharedFile=path.join(shared,'openclaw.sqlite'),agentFile=path.join(agent,'openclaw-agent.sqlite');
-  if(!empty){createDatabase(sharedFile,'global',current?22:20);createDatabase(agentFile,'agent',current?27:25,'main');}
+  if(!empty){createDatabase(sharedFile,'global',current?40:20);createDatabase(agentFile,'agent',current?42:25,'main');}
   await fs.mkdir(path.join(directory,'workspace'),{mode:0o700});await fs.writeFile(path.join(directory,'workspace','AGENTS.md'),'Original managed workspace notes.');
   const config=path.join(directory,'gateway.json');await fs.writeFile(config,'{"old":"protected preimage"}',{mode:0o600});
   await fs.writeFile(path.join(directory,'native-auth-sentinel.json'),'Synthetic authentication preimage.',{mode:0o600});
@@ -37,7 +37,7 @@ async function fixture(t,{current=false,empty=false}={}){
     if(args.includes('--lint'))return{exitCode:phase?0:1,stdout:JSON.stringify(phase?after:unknownFinding?{...before,findings:[...before.findings,{checkId:'core/doctor/agent-database-admission',severity:'warning',requirement:'agent-database-inspection-failed',message:'Unexpected integrity failure'}]}:before)};
     assert.deepEqual(args.slice(1),['doctor','--fix','--non-interactive']);
     if(doctorError)throw new Error('private secret token must never enter a public failure');
-    for(const [filename,version]of [[sharedFile,22],[agentFile,27]]){const db=new DatabaseSync(filename);try{db.exec(`PRAGMA user_version=${version}`);db.prepare('UPDATE schema_meta SET schema_version=?').run(version);}finally{db.close();}}
+    for(const [filename,version]of [[sharedFile,40],[agentFile,42]]){const db=new DatabaseSync(filename);try{db.exec(`PRAGMA user_version=${version}`);db.prepare('UPDATE schema_meta SET schema_version=?').run(version);}finally{db.close();}}
     phase=1;await fs.writeFile(config,'{"doctor":"changed managed configuration"}');return{exitCode:0,stdout:'Do not forward private Doctor output.'};
   };
   const options={directory,packageRoot:path.join(parent,'pinned-package'),nodePath:process.execPath,runCommand,verifyRuntime:async()=>{}};
@@ -67,13 +67,13 @@ test('known legacy native state is backed up before overlay writes, then repaire
   const result=await completeNativeUpgrade(ticket,f.completeOptions);assert.equal(result.status,'migrated');assert.equal(f.reprojected,1);
   assert.deepEqual(await fs.readFile(path.join(f.directory,'native-auth-sentinel.json')),auth);
   assert.equal((await fs.readFile(f.config,'utf8')),'{"managed":"current protected configuration"}');
-  for(const [file,target]of [[f.sharedFile,22],[f.agentFile,27]]){const db=new DatabaseSync(file,{readOnly:true});try{assert.equal(db.prepare('PRAGMA user_version').get().user_version,target);assert.match(db.prepare('SELECT value FROM retained').get().value,/retained history/);}finally{db.close();}}
+  for(const [file,target]of [[f.sharedFile,40],[f.agentFile,42]]){const db=new DatabaseSync(file,{readOnly:true});try{assert.equal(db.prepare('PRAGMA user_version').get().user_version,target);assert.match(db.prepare('SELECT value FROM retained').get().value,/retained history/);}finally{db.close();}}
   const restarted=await prepareNativeUpgrade(f.options);assert.equal(restarted.required,false);
   assert.equal(f.calls.filter(row=>row.args.includes('--fix')).length,1);
 });
 test('unrecognized/newer schema and mismatched database owner cannot trigger backup or repair',async t=>{
   for(const kind of ['newer','metadata','owner']){const f=await fixture(t),db=new DatabaseSync(f.agentFile);try{
-    if(kind==='newer'){db.exec('PRAGMA user_version=28');db.prepare('UPDATE schema_meta SET schema_version=28').run();}
+    if(kind==='newer'){db.exec('PRAGMA user_version=43');db.prepare('UPDATE schema_meta SET schema_version=43').run();}
     if(kind==='metadata')db.prepare('UPDATE schema_meta SET schema_version=27').run();
     if(kind==='owner')db.prepare('UPDATE schema_meta SET agent_id=?').run('other');
   }finally{db.close();}

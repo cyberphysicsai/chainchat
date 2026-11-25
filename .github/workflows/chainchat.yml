@@ -56,11 +56,28 @@ jobs:
           node openclaw/launcher.mjs --check
           echo "CT_OPENCLAW_PACKAGE=$GITHUB_WORKSPACE/openclaw/runtime/node_modules/openclaw" >> "$GITHUB_ENV"
           echo "CT_OPENCLAW_NODE=$(node -p process.execPath)" >> "$GITHUB_ENV"
-      - name: Install previous runtime only for real upgrade acceptance
+      - name: Install the previous pinned runtimes for real upgrade acceptance
+        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'full'
+        env:
+          CT_CI_SHARD: ${{ matrix.shard }}
+        shell: bash
         run: |
+          set -euo pipefail
+          upgrade_shard=$(node --input-type=module -e 'import fs from "node:fs"; const files=fs.readdirSync("test",{withFileTypes:true}).filter(file=>file.isFile()&&file.name.endsWith(".test.mjs")).map(file=>file.name).sort(); const index=files.indexOf("native-upgrade.integration.test.mjs"); if(index<0)process.exit(1); console.log(index%4);')
+          if [[ "$upgrade_shard" != "$CT_CI_SHARD" ]]; then exit 0; fi
           python -c 'import json; from pathlib import Path; root=Path("test/fixtures/previous-openclaw"); package=json.loads((root/"package.json").read_text()); lock=json.loads((root/"package-lock.json").read_text()); previous=lock["packages"]["node_modules/openclaw"]; assert package["dependencies"]["openclaw"]=="2026.10.9"; assert previous["version"]=="2026.10.9"; assert previous["resolved"]=="https://registry.npmjs.org/openclaw/-/openclaw-2026.10.9.tgz"; assert previous["integrity"]=="sha512-KbIl0/7an0/nKBo92FnJg7LFcEpFVQyOgSRfHNE9yxELg1Ebql7BmBsdLL+1dDOLZnQtuwjt6Hy45CCrmYdJNA=="'
           node "$CT_BOOTSTRAP_NPM_CLI" ci --ignore-scripts --omit=dev --prefix test/fixtures/previous-openclaw
           python -c 'import json,os; from pathlib import Path; root=Path("test/fixtures/previous-openclaw/node_modules/openclaw").resolve(); assert json.loads((root/"package.json").read_text())["version"]=="2026.10.9"; stream=open(os.environ["GITHUB_ENV"],"a",encoding="utf-8"); stream.write("CT_OPENCLAW_LEGACY_PACKAGE="+str(root)+"\n"); stream.close()'
+          previous=df50c9359afb9092e29596a0f69edeef0929dcbd
+          git fetch --no-tags --depth=1 origin "$previous"
+          test "$(git rev-parse FETCH_HEAD)" = "$previous"
+          fixture="$RUNNER_TEMP/chainchat-113-upgrade-fixture"
+          mkdir "$fixture"
+          git show "${previous}:openclaw/runtime/package.json" > "$fixture/package.json"
+          git show "${previous}:openclaw/runtime/package-lock.json" > "$fixture/package-lock.json"
+          python -c 'import json,sys; from pathlib import Path; lock=json.loads((Path(sys.argv[1])/"package-lock.json").read_text()); pin=lock["packages"]["node_modules/openclaw"]; assert pin["version"]=="2026.11.3" and pin["integrity"]=="sha512-FBq/q0TCaoA2b7qfdV0q81fHhI6RBB1zAQfJQREc1u2TlK5khVgCUsAlXskLWthyVqRz5PWEj+oOmfYgK58dHg==" and pin["resolved"]=="https://registry.npmjs.org/openclaw/-/openclaw-2026.11.3.tgz"' "$fixture"
+          node "$CT_BOOTSTRAP_NPM_CLI" ci --ignore-scripts --omit=dev --prefix "$fixture"
+          echo "CT_OPENCLAW_PREVIOUS_PACKAGE=$fixture/node_modules/openclaw" >> "$GITHUB_ENV"
       - name: Install the locked isolated browser for native action acceptance
         run: |
           node --input-type=commonjs -e 'const r=require("node:module").createRequire(process.env.CT_OPENCLAW_PACKAGE+"/package.json"); const p=require("node:path"); require("node:child_process").execFileSync(process.execPath,[p.join(p.dirname(r.resolve("playwright-core/package.json")),"cli.js"),"install","--with-deps","chromium"],{stdio:"inherit"}); require("node:fs").appendFileSync(process.env.GITHUB_ENV,"CT_BROWSER_EXECUTABLE="+r("playwright-core").chromium.executablePath()+"\n");'
