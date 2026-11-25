@@ -105,7 +105,7 @@ DELIVERY_SESSION_PATCHES = (
 MANAGED_MEDIA_PATCHES = (
     ('dist/subagent-announce-delivery-BNgtsNUw.mjs',
      'fbe693c24c8349c0cf5a425b7fedbac3b3bf79e458a0932d626051e1e84f94e7',
-     'de84b0af0a40a67a3445fa2e8f94cd42e3a12043f3e390c475966206c5f63d6f',
+     '3e4a7fb79bbe71cf1fbbdde8e6b0a5bcf96a50548a77d2697eede0679a629a7b',
      'if(sourceOwnerChanged())return sourceOwnerChangedResult();const t=collectExpectedMediaFromInternalEvents(e.internalEvents);',
      '''if(sourceOwnerChanged())return sourceOwnerChangedResult();
 const chainchatMediaKinds={image_generate:`image`,video_generate:`video`,music_generate:`music`};
@@ -122,8 +122,10 @@ if(e.expectsCompletionMessage&&Object.hasOwn(chainchatMediaKinds,e.sourceTool)&&
   const replyInstruction=event.status===`ok`?
     `The ${mediaKind} is ready for the original chat. Follow the current visible-reply contract with a short user-facing caption and every structured generated attachment from this event. ${privateNotice}`:
     `${mediaKind[0].toUpperCase()+mediaKind.slice(1)} generation task failed for the original chat. Follow the current visible-reply contract with a concise user-facing failure message. ${privateNotice}`;
-  const{r:formatAgentInternalEventsForPrompt}=await import(`./internal-events-2yIaMSmk.mjs`);
-  const triggerMessage=formatAgentInternalEventsForPrompt([{...event,replyInstruction}]);
+  const{a:resolveAcpPromptBody}=await import(`./internal-events-2yIaMSmk.mjs`);
+  const{o:annotateInterSessionPromptText}=await import(`./input-provenance-C8_14SbD.mjs`);
+  const provenance={kind:`inter_session`,sourceSessionKey:e.sourceSessionKey,sourceChannel:`internal`,sourceTool:e.sourceTool};
+  const triggerMessage=annotateInterSessionPromptText(resolveAcpPromptBody(``,[{...event,replyInstruction}],provenance),provenance);
   return sendSubagentAnnounceDirectly({...e,triggerMessage,internalEvents:void 0,inputAttachments:void 0});
 }
 const t=collectExpectedMediaFromInternalEvents(e.internalEvents);'''),
