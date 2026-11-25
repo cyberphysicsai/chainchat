@@ -87,11 +87,24 @@ SYSTEM_CONTEXT_PATCHES = (
      'const K=t.sessionForkRequest?.pin;'
      'const q=F&&e.activeContextEngine?.info?.id!==`cypher-tempre-poi`?async(e,r=false)=>{'),
 )
+# The native send RPC keeps its verified request session in policyKey. Supply
+# that exact managed session to message_sending if there is no producer key,
+# without changing the route, transcript ownership or PoI delivery permit.
+DELIVERY_SESSION_PATCHES = (
+    ('dist/deliver-prepare-dxkuFNBI.mjs',
+     '5eacbf1750f784a4300892d612a093a3a91724f44424964f344e267eaf2a43fe',
+     'e896ad070bbc1e4366f96201db51eca1cd1df4b3b5df6cb54fa04103a458cb2b',
+     'const g=e.session?.key;const _=[{changedKey:`replyHookChanged`',
+     'const policyKey=e.session?.policyKey;'
+     'const g=e.session?.key??(typeof policyKey===`string`&&/^agent:main:chainchat-control:[a-f0-9]{64}$/.test(policyKey)?policyKey:void 0);'
+     'const _=[{changedKey:`replyHookChanged`'),
+)
 PATCH_GROUPS = (
     (IDENTITY, METADATA_PATCHES),
     ('api-key-channel-auth-v1', POLICY_PATCHES),
     ('admitted-tool-presentation-v1', TOOL_PRESENTATION_PATCHES),
     ('managed-system-context-v1', SYSTEM_CONTEXT_PATCHES),
+    ('managed-delivery-session-v1', DELIVERY_SESSION_PATCHES),
 )
 PATCHES = tuple(patch for _, group in PATCH_GROUPS for patch in group)
 DESCRIPTORS = [

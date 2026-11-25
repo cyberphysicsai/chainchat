@@ -18,6 +18,9 @@ const expected = [
   {id: 'managed-system-context-v1', files: {
     'dist/attempt-D0eWH9Mj.mjs':['d3b813a804ce7f4d6da2eb113a5832b79f7bbfcd18fa3c42eb24f6977d7fe52e','4a1aefcd4df65b3d8b8a5ce95080f660e8070a21706a8edc1e62c08f4d1b6f7f'],
   }},
+  {id: 'managed-delivery-session-v1', files: {
+    'dist/deliver-prepare-dxkuFNBI.mjs':['5eacbf1750f784a4300892d612a093a3a91724f44424964f344e267eaf2a43fe','e896ad070bbc1e4366f96201db51eca1cd1df4b3b5df6cb54fa04103a458cb2b'],
+  }},
 ];
 function matchesCommitment(overlay, index) {
   const {id, files} = expected[index], count = Object.keys(files).length;
