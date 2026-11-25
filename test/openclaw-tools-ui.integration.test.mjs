@@ -82,7 +82,28 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
   const directory = await fs.realpath(await fs.mkdtemp(path.join(tempBase, 'ct-tools-ui-')));
   const root = path.join(directory, 'agent'), workspace = path.join(directory, 'workspace');
   let app, browser, upstream, gatewayChild, initialGatewayPid, gatewayBaselineStarts, browserBearer = '', gatewayStarts = 0;
-  const gatewayChildren = [], requests = [], reviews = [], nativeCalls = [], diagnostics = [], pageErrors = [];
+  const gatewayChildren = [], requests = [], reviews = [], nativeCalls = [], pageErrors = [];
+  const readinessProbes = new Map();
+  let diagnostics = '';
+  const recordDiagnostic = line => { diagnostics = (diagnostics + line).slice(-10000); };
+  const fixtureFailure = (error, stage) => new Error(
+    `${stage} failed${error.code ? ` (${error.code})` : ''}: ${error.message}\n` +
+    `Isolated readiness probes: ${JSON.stringify(Object.fromEntries(readinessProbes))}\n` +
+    `Isolated runtime diagnostics:\n${diagnostics || '[none recorded]'}`,
+    { cause: error },
+  );
+  const fixtureFetch = async (url, options) => {
+    const target = new URL(typeof url === 'string' ? url : (url.url || url.href));
+    const probe = target.hostname === '127.0.0.1' && ['/startupz', '/readyz', '/v1/models'].includes(target.pathname);
+    try {
+      const response = await fetch(url, options);
+      if (probe) readinessProbes.set(target.pathname, { http: response.status });
+      return response;
+    } catch (error) {
+      if (probe) readinessProbes.set(target.pathname, { transport: error.name === 'TimeoutError' ? 'timeout' : 'unavailable' });
+      throw error;
+    }
+  };
   const toolPlan = [];
   t.after(async () => {
     try { await browser?.close(); }
@@ -147,10 +168,10 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       reviews.push({ args, result }); return result;
     },
     openclaw: { stateDir: path.join(directory, 'gateway'), packageRoot: runtimePackage, nodePath: runtimeNode,
-      pluginPath: path.join(application, 'openclaw/plugin'), onDiagnostic: line => diagnostics.push(line) },
+      pluginPath: path.join(application, 'openclaw/plugin'), onDiagnostic: recordDiagnostic },
     // Startup also uses this adapter for short-lived CLI helpers. Observe only
     // the authoritative Gateway entrypoint, without changing its permissions.
-    openclawFactory: options => createOpenClawGateway({ ...options, spawnImpl: (...args) => {
+    openclawFactory: options => createOpenClawGateway({ ...options, fetchImpl: fixtureFetch, spawnImpl: (...args) => {
       const child = spawn(...args), argv = args[1];
       if (Array.isArray(argv) && typeof argv[0] === 'string' &&
           path.resolve(argv[0]) === path.join(application, 'openclaw', 'gateway-bootstrap.mjs') &&
@@ -159,7 +180,7 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
       }
       return child;
     } }),
-  });
+  }).catch(error => { throw fixtureFailure(error, 'OpenClaw fixture startup'); });
   await app.store.add(root, 'Tool Grant Fixture', true);
   app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
   const origin = `http://127.0.0.1:${app.server.address().port}`;
@@ -328,6 +349,6 @@ test('real browser Applies scoped tools to the next PoI turn and revokes without
     assert.equal(runtime.healthy, true); assert.equal(runtime.enforcementHealthy, true);
     assert.deepEqual(pageErrors, []);
   } catch (error) {
-    throw new Error(`${error.message}\nIsolated runtime diagnostics:\n${diagnostics.join('').slice(-4000)}`, { cause: error });
+    throw fixtureFailure(error, 'Browser tool acceptance');
   }
 });
