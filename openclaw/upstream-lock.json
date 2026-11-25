@@ -6,7 +6,7 @@
     "integrity": "sha512-/FKDjxY1ZdUSXHx1a9b4EUpPRZywM3uv4181g22XImJfp/5+h+fFUZ7B7HthNrdYzq//05zH0Yf7mefzIlWFaQ==",
     "license": "MIT",
     "upstream": "https://github.com/openclaw/openclaw",
-    "modifications": "Original npm archive retained. The managed installation attests early-hook provenance, API-key channel policy, admitted tool presentation, fresh managed system context, and the embedded Zod size-cap backport for Chrome DevTools MCP. The private npm dependency and installer bootstrap use separately verified security backports and a verified ip-address archive.",
+    "modifications": "Original npm archive retained. The managed installation attests early-hook provenance, API-key channel policy, admitted tool presentation, fresh managed system context, exact queued terminal text, and the embedded Zod size-cap backport for Chrome DevTools MCP. The private npm dependency and installer bootstrap use separately verified security backports and a verified ip-address archive.",
     "release": "https://github.com/openclaw/openclaw/releases/tag/v2026.11.10",
     "releaseCommit": "6ea542fd97e2876aa4c871ccc494ed5419a03c5c"
   },
@@ -169,6 +169,17 @@
           "path": "dist/attempt-D0eWH9Mj.mjs",
           "originalSha256": "d3b813a804ce7f4d6da2eb113a5832b79f7bbfcd18fa3c42eb24f6977d7fe52e",
           "sha256": "4a1aefcd4df65b3d8b8a5ce95080f660e8070a21706a8edc1e62c08f4d1b6f7f"
+        }
+      ]
+    },
+    {
+      "id": "queued-terminal-display-v1",
+      "upstreamVersion": "2026.11.10",
+      "files": [
+        {
+          "path": "dist/chat-send-handler-D686bqTH.mjs",
+          "originalSha256": "dcf96d99d3cce2e4ece919a1de11178f9d9ea96956f34d27b985770678c3ffb2",
+          "sha256": "e83e02ee4cbf6681ca8d90b7cdf24f2dd3fab9dc18701bec5025aaf74f17c45c"
         }
       ]
     }

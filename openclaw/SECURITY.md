@@ -33,9 +33,11 @@ definitions out of the model's current tool list, using the runtime's computed
 callable set. The `managed-system-context-v1` overlay keeps the mandatory context
 engine's current system assembly out of persisted prompt updates. The private
 provider proxy still requires one current capability in the system context and
-strips it before forwarding. The installer checks all seven exact original
-SHA-256 values before replacement, and doctor and Gateway require all seven
-final hashes. The original
+strips it before forwarding. `queued-terminal-display-v1` makes an exact durable
+plain-text reply available at the authorized terminal event for the managed queue.
+The broker still matches the exact reviewed candidate before release. The installer
+checks every original SHA-256 value before replacement, and doctor and Gateway
+verify every final hash. The original
 npm SRI describes the downloaded archive. A separate dependency overlay selects external
 Undici 8.12.4, Zod 4.6.7, npm 12.2.2 and Minimatch 11.0.8. These are ordinary dependency overrides,
 not edits to the upstream source tarball. The runtime lockfile, setup integrity

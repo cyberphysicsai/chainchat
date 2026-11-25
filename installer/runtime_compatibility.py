@@ -1,4 +1,4 @@
-"""Apply exact admission and API-key policy overlays to reviewed OpenClaw.
+"""Apply exact ChainChat compatibility overlays to reviewed OpenClaw.
 
 The original published archive/SRI is retained. Only already-private typed
 inputProvenance and currentSourceTurnId values enter the existing early hook context.
@@ -87,11 +87,32 @@ SYSTEM_CONTEXT_PATCHES = (
      'const K=t.sessionForkRequest?.pin;'
      'const q=F&&e.activeContextEngine?.info?.id!==`cypher-tempre-poi`?async(e,r=false)=>{'),
 )
+# Adopted chat input has its own current terminal authority. OpenClaw omits
+# the body from its final frame when that exact answer is already committed
+# to its source transcript. Reuse the native, anchored mirror for plain text
+# only. The existing broadcast fence and the host's exact PoI receipt still
+# govern delivery.
+QUEUED_TERMINAL_PATCHES = (
+    ('dist/chat-send-handler-D686bqTH.mjs',
+     'dcf96d99d3cce2e4ece919a1de11178f9d9ea96956f34d27b985770678c3ffb2',
+     'e83e02ee4cbf6681ca8d90b7cdf24f2dd3fab9dc18701bec5025aaf74f17c45c',
+     'const j=extractAssistantDisplayText(A)??(A.length===0?D:void 0);const M=',
+     'let j=extractAssistantDisplayText(A)??(A.length===0?D:void 0);'
+     'const terminalInput=e.terminalEntry?.input;'
+     'if(!j&&A.length===0&&e.suppressFinal===false&&e.terminalEntry?.adapter?.terminalOutcomeObserved===true'
+     '&&terminalInput?.protocolRunId===o&&terminalInput.custody?.enqueued===true'
+     '&&terminalInput.abortSignal?.aborted===false&&/^agent:main:chainchat-control:[a-f0-9]{64}$/.test(s)){'
+     'const sourceMirrors=S.filter(Boolean);const blocks=sourceMirrors[0];'
+     'if(sourceMirrors.length===1&&blocks.length<=32&&blocks.every(block=>block?.type===`text`&&typeof block.text===`string`)){'
+     'const text=extractAssistantDisplayText(blocks);if(text&&Buffer.byteLength(text,`utf8`)<=131072)j=text}}'
+     'const M='),
+)
 PATCH_GROUPS = (
     (IDENTITY, METADATA_PATCHES),
     ('api-key-channel-auth-v1', POLICY_PATCHES),
     ('admitted-tool-presentation-v1', TOOL_PRESENTATION_PATCHES),
     ('managed-system-context-v1', SYSTEM_CONTEXT_PATCHES),
+    ('queued-terminal-display-v1', QUEUED_TERMINAL_PATCHES),
 )
 PATCHES = tuple(patch for _, group in PATCH_GROUPS for patch in group)
 DESCRIPTORS = [
